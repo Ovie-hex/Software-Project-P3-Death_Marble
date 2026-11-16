@@ -1,0 +1,121 @@
+—[Connector] (내가 이거 쓸려고 문제 2번 개발했다 😭😭)
+=======================================
+<Connection>
+- connections: List<Connection>
+- bindableEvents: List<BindableEvent>
+- name: String
+—
++ getConnection(name: String): Connection?
++ send(sender: String, data: dynamic): void
++ send(sender: String, receiver: String, data: dynamic): void
++ send(sender: String, receiver: List<String>, data: dynamic): void
++ destroy(): void
+=======================================
+<BindableEvent>
+- id: String
+- connection: Connection
++ name: String
++ onFire: Func<String, dynamic>
+—
++ fire(data: dynamic): void
++ fire(receiver: String, data: dynamic): void
++ fire(receiver: List<String>, data: dynamic): void
++ destroy(): void
+=======================================
++ getBindableEvent(name: String): BindableEvent
+=======================================
+
+—[Game_Manager] (Game객체를 생성하고 그 객체 내 맴버 변수를 사용하는 방식으로)
+=======================================
+<Stage>
+- map: Map
+- cards: Dictionary<Card, int>
+—
++ initStage(): void
+
+<Map>
+- tiles: List<Tile>
+- startTile: Tile
+—
++ loadMap(): void
+
+<Tile> (추상 클래스)
+- onPlayers: List<Player>
+- prevTile: List<Tile>
+- nextTile: List<Tile>
+—
++ playerReached(): void
+
+<Trap>
+- owner: Player
+- level: int
+—
++ replace(): void
++ upgrade(): void
++ destroy(): void
+
+<Card> (추상 클래스)
+- name: String
+- type: Enum.CardType
+- owner: Player
+—
++ activate(): void
+
+<Player>
+- id: String
+- name: String
+- maxlife: int
+- life: int
+- dice: Dice
+- onTile: Tile
+- traps: List<Trap>
+—
++ takeDamage(amount: int): int
++ takeHeal(amount: int): int
+
+<Dice>
+owner: Player
+numberRange: system.Range
+preferNumber: int
+—
++ roll(): int
+
+ㄴ 위 5개의 클래스는 현식씨라면 어떻게 정의할 것인가? 위는 예시문 아마 설계서 대로 안따라갈듯 (Data_Manager 참고, 예를 들어 실제로 Data_Manager의 함수를 사용할 때 Enum.GameClass.Map[숫자 매칭]으로 데이터를 요청하는 것이다.)
+
+<Game>-----초안 작성완료
+- players: List<Player>
+- cards: List<Card>
+- stage: Stage
+- fatalRound: int
+- maxRound: int
++ round: int
++ rolledPlayers: list<Player>
++ currentPlayerIndex: int
++ actRecords: list<actRecord>
++isGameOver: bool// 게임이 끝났는지 검사하는 변수
+—
+//게임 초기화 및 시작 함수
++initGame(platerCount: int, stage: stage):void//플레이어 수와 스테이지를 전달받아 게임 초기화
++startGame(): void//게임을 시작하고 첫 번째 플레이어의 턴 실행
++selectTurnOrder(): void// 룰렛을 통해 플레이어의 턴 순서를 무작위로 결정
+//턴 및 라운드 관리
++startTurn(): void// 현재 플레이어의 턴 시작
++rollDice(): int//현재 플레이어의 주사위 실행
++movePlayer(steps: int): void//주사위 결과에 따라 캐릭터 이동
++selectPath(nextTile: Tile): void//갈림길에서 플레이어가 선택한 경로 적용
++endTurn(): void//현재 플레이어의 턴 종료
++nextRound(): void//모든 플레이어의 턴이 끝나면 다음 라운드 진행
+//카드 및 타일 이벤트
++useCard(card: Card): void//카드 사용 가능 여부를 확인하고 카드 효과 실행???
++activateTileEvent(player: Player): void//플레이어가 도착한 타일의 이벤트 실행(takeDamage, takeHeal사용?)
+//승리 판정 및 서든데스
++checkPlayerLife()//플레이어 생존 여부 확인 (한 플레이어가 끝날때마다  생존여부를 확인)
++checkGameOver(): bool//생존 플레이어 수와 최대 라운드를 기준으로 게임 종료 여부 판단
++getWinner(): Player?//게임 종료 조건에 따라 승리 플레이어 반환
++activateSuddenDeath():void//지정된 라운드 부터 서든 데스 규칙 적용
++endGame():void//게임 종료 처리 및 결과 전달
+현식씨가 BindableEvent의 콜백을 해당 클래스의 맴버 함수로 사용을 해야할 때 어떤식으로 설정할 것인지?
+설계서이므로 달라질수도 있음, 만약 내가 디렉터라면???
+=======================================
+Connector.BindableEvent정의 및 활용
+=======================================

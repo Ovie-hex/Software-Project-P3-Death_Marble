@@ -18,6 +18,11 @@ namespace Software_Project_P3_Death_Marble
     {
         public MainWindow()
         {
+            // Init Modules
+            new Data_Manager();
+            new Stage_Customizer();
+
+            // Init XAML Controlls
             InitializeComponent();
         }
     }

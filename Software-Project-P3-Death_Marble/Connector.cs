@@ -87,7 +87,7 @@ namespace Software_Project_P3_Death_Marble
             private void InvokeSafe(BindableEvent target, string senderName, dynamic data)
             {
                 if (Application.Current != null && !Application.Current.Dispatcher.CheckAccess())
-                    Application.Current.Dispatcher.Invoke(() => target.onInvoke?.Invoke(senderName, data));
+                    Application.Current.Dispatcher.InvokeAsync(() => target.onInvoke?.Invoke(senderName, data));
                 else
                     target.onInvoke?.Invoke(senderName, data);
             }
@@ -104,9 +104,9 @@ namespace Software_Project_P3_Death_Marble
                         InvokeSafe(target, sender.name, ((object)data).DeepClone());
                         delivered = true;
                     }
-                    if (!delivered)
-                        addPendingMessage(sender, null, data);
                 }
+                if(!delivered)
+                    addPendingMessage(sender, null, data);
             }
 
             internal void send(BindableEvent sender, string receiverName, dynamic data)
@@ -120,9 +120,9 @@ namespace Software_Project_P3_Death_Marble
                         InvokeSafe(target, sender.name, ((object)data).DeepClone());
                         delivered = true;
                     }
-                    if (!delivered)
-                        addPendingMessage(sender, receiverName, data);
                 }
+                if (!delivered)
+                    addPendingMessage(sender, receiverName, data);
             }
 
             // Remove Connection

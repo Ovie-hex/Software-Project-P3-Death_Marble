@@ -21,6 +21,8 @@ namespace Software_Project_P3_Death_Marble
             // Init Modules
             new Data_Manager();
             new Stage_Customizer();
+            new Game_Manager();
+            new XAML_Manager();
 
             // Init XAML Controlls
             InitializeComponent();

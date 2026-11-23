@@ -1,4 +1,6 @@
-﻿using System.Text;
+﻿using System;
+using System.Collections.Generic;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -9,16 +11,14 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 
-namespace Software_Project_P3_Death_Marble
+namespace Software_Project_P3_Death_Marble.Views
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// UserControl1.xaml에 대한 상호 작용 논리
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class MainPage : UserControl
     {
-        public event EventHandler? StartRequested;
-
-        public MainWindow()
+        public MainPage()
         {
             InitializeComponent();
 
@@ -26,9 +26,8 @@ namespace Software_Project_P3_Death_Marble
             new Data_Manager();
             new Stage_Customizer();
             new Game_Manager();
-            new XAML_Manager();
 
-            InitialPage.StartRequested += (_, _) => StartRequested?.Invoke(this, EventArgs.Empty);
+            
         }
     }
 }

@@ -1,53 +1,82 @@
-﻿using Force.DeepCloner;
-using Microsoft.EntityFrameworkCore;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Text;
-using System.Windows;
-
 namespace Software_Project_P3_Death_Marble
 {
-    internal class Data_Manager
+    internal sealed class Data_Manager
     {
+        private bool defaultStageInitialized;
+
+        private readonly Connector.BindableEvent loadStagesEvent;
+        private readonly Connector.BindableEvent saveStageEvent;
+        private readonly Connector.BindableEvent removeStageEvent;
+
         public Data_Manager()
         {
-            // Connector
-            Connector.BindableEvent loadStageEv = Connector.GetBindableEvent("loadStageEv");
-            Connector.BindableEvent saveStageEv = Connector.GetBindableEvent("saveStageEv");
-            Connector.BindableEvent removeStageEv = Connector.GetBindableEvent("removeStageEv");
+            loadStagesEvent = Connector.GetBindableEvent(StageConnectorNames.LoadStages);
+            loadStagesEvent.Name = StageConnectorNames.DataManager;
+            loadStagesEvent.OnInvoke = HandleLoadStages;
 
+            saveStageEvent = Connector.GetBindableEvent(StageConnectorNames.SaveStage);
+            saveStageEvent.Name = StageConnectorNames.DataManager;
+            saveStageEvent.OnInvoke = HandleSaveStage;
 
-            Data data = new Data();
-            data.Database.EnsureCreated();
+            removeStageEvent = Connector.GetBindableEvent(StageConnectorNames.RemoveStage);
+            removeStageEvent.Name = StageConnectorNames.DataManager;
+            removeStageEvent.OnInvoke = HandleRemoveStage;
+        }
 
-            if (!data.Stages.Any())
+        private void HandleLoadStages(string senderName, dynamic? request)
+        {
+            try
             {
-                List<StageData> initStages = [];
+                if (request is not LoadStagesRequest)
+                    throw new InvalidOperationException("잘못된 스테이지 로드 요청입니다.");
 
-                data.Stages.AddRange(initStages);
-                data.SaveChanges();
+                if (!defaultStageInitialized)
+                {
+                    using Data data = new();
+                    data.Database.EnsureCreated();
+                    StageRepository.EnsureDefaultStage(data);
+                    defaultStageInitialized = true;
+                }
+
+                List<StageData> stages = StageRepository.LoadStages();
+                loadStagesEvent.Fire(senderName, StageEventResult.Succeeded(stages));
             }
-
-            loadStageEv.OnInvoke = (string s, dynamic? d/*null*/) =>
-            {              
-                loadStageEv.Fire(s, data);
-            };
-
-            saveStageEv.OnInvoke = (string s, dynamic? d) =>
+            catch (Exception exception)
             {
-                // 여기에서 들어온 데이터를 바탕으로 스테이지의 데이터를 변경해야함
-                data.SaveChanges();
-            };
+                loadStagesEvent.Fire(senderName, StageEventResult.Failed(exception));
+            }
+        }
 
-            removeStageEv.OnInvoke = (string s, dynamic? d) =>
+        private void HandleSaveStage(string senderName, dynamic? request)
+        {
+            try
             {
-                // 여기에서 들어온 스테이지의 uuid로 해당 uuid를 통해하여 지정된 스테이지를 삭제해야함
-                data.SaveChanges();
-            };
+                if (request is not SaveStageRequest saveRequest)
+                    throw new InvalidOperationException("잘못된 스테이지 저장 요청입니다.");
 
+                StageRepository.SaveStage(saveRequest.Stage);
+                saveStageEvent.Fire(senderName, StageEventResult.Succeeded());
+            }
+            catch (Exception exception)
+            {
+                saveStageEvent.Fire(senderName, StageEventResult.Failed(exception));
+            }
+        }
+
+        private void HandleRemoveStage(string senderName, dynamic? request)
+        {
+            try
+            {
+                if (request is not RemoveStageRequest removeRequest)
+                    throw new InvalidOperationException("잘못된 스테이지 삭제 요청입니다.");
+
+                StageRepository.RemoveStage(removeRequest.StageId);
+                removeStageEvent.Fire(senderName, StageEventResult.Succeeded());
+            }
+            catch (Exception exception)
+            {
+                removeStageEvent.Fire(senderName, StageEventResult.Failed(exception));
+            }
         }
     }
-    
-
 }

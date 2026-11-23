@@ -10,13 +10,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Images\Background.png" />
-    <Resource Include="Images\Start.png" />
-    <Resource Include="Images\Exit.png" />
-    <Resource Include="Images\Title.png" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="DeepCloner" Version="0.10.4" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />

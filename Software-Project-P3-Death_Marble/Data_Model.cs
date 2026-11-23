@@ -74,17 +74,25 @@ namespace Software_Project_P3_Death_Marble
         // [수정] JSON 역직렬화 시 타일이 중복 생성되지 않도록 기본 생성자는 비워둠
         public MapData() { }
 
-        // [추가] 기본 8칸 맵 생성용 정적 메서드
+        // 기본 9x9 도넛형 순환 맵 생성
         public static MapData CreateDefault()
         {
             var map = new MapData();
-            Vector2[] positions = [
-                new(0, 0), new(1, 0), new(2, 0),
-                new(2, 1), new(2, 2), new(1, 2),
-                new(0, 2), new(0, 1)
-            ];
+            List<Vector2> positions = new(32);
 
-            for (int i = 0; i < positions.Length; i++)
+            for (int x = 0; x < 9; x++)
+                positions.Add(new Vector2(x, 0));
+
+            for (int y = 1; y < 9; y++)
+                positions.Add(new Vector2(8, y));
+
+            for (int x = 7; x >= 0; x--)
+                positions.Add(new Vector2(x, 8));
+
+            for (int y = 7; y > 0; y--)
+                positions.Add(new Vector2(0, y));
+
+            for (int i = 0; i < positions.Count; i++)
             {
                 map.Tiles.Add(new TileData { Position = positions[i] });
             }
@@ -157,10 +165,10 @@ namespace Software_Project_P3_Death_Marble
             modelBuilder.Entity<StageData>()
                 .Property(s => s.Map)
                 .HasConversion(
-                    v => JsonSerializer.Serialize(v, jsonOptions),
-                    v => JsonSerializer.Deserialize<MapData>(v, jsonOptions) ?? new MapData()
+                    v => SerializeMap(v),
+                    v => DeserializeMap(v)
                 )
-                .Metadata.SetValueComparer(CreateJsonValueComparer<MapData>(jsonOptions));
+                .Metadata.SetValueComparer(CreateMapValueComparer());
 
             // 2. List<CardEntry> 변환기 + 깊은 복사 ValueComparer 적용
             modelBuilder.Entity<StageData>()
@@ -170,6 +178,150 @@ namespace Software_Project_P3_Death_Marble
                     v => JsonSerializer.Deserialize<List<CardEntry>>(v, jsonOptions) ?? new()
                 )
                 .Metadata.SetValueComparer(CreateJsonValueComparer<List<CardEntry>>(jsonOptions));
+        }
+
+        private static readonly JsonSerializerOptions MapSnapshotOptions = new()
+        {
+            IncludeFields = true
+        };
+
+        private static readonly JsonSerializerOptions LegacyMapOptions = new()
+        {
+            ReferenceHandler = ReferenceHandler.Preserve,
+            IncludeFields = true
+        };
+
+        private static string SerializeMap(MapData? map)
+        {
+            if (map == null)
+                return "null";
+
+            List<TileData> tiles = map.Tiles.ToList();
+            int startIndex = FindTileIndex(tiles, map.Start);
+            if (map.Start != null && startIndex < 0)
+            {
+                tiles.Insert(0, map.Start);
+                startIndex = 0;
+            }
+
+            int IndexOf(TileData tile) => FindTileIndex(tiles, tile);
+
+            MapSnapshot snapshot = new()
+            {
+                IsLinked = map.IsLinked,
+                StartIndex = startIndex >= 0 ? startIndex : null,
+                Tiles = tiles.Select(tile => new TileSnapshot
+                {
+                    Position = tile.Position,
+                    Type = tile.Type,
+                    Amount = tile.Amount,
+                    PrevIndices = tile.Prev
+                        .Select(IndexOf)
+                        .Where(index => index >= 0)
+                        .ToList(),
+                    NextIndices = tile.Next
+                        .Select(IndexOf)
+                        .Where(index => index >= 0)
+                        .ToList()
+                }).ToList()
+            };
+
+            return JsonSerializer.Serialize(snapshot, MapSnapshotOptions);
+        }
+
+        private static MapData DeserializeMap(string json)
+        {
+            if (json == "null")
+                return new MapData();
+
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("Version", out _))
+            {
+                MapSnapshot? snapshot = JsonSerializer.Deserialize<MapSnapshot>(
+                    json,
+                    MapSnapshotOptions);
+                if (snapshot == null)
+                    return new MapData();
+
+                MapData map = new()
+                {
+                    IsLinked = snapshot.IsLinked,
+                    Tiles = snapshot.Tiles.Select(tile => new TileData
+                    {
+                        Position = tile.Position,
+                        Type = tile.Type,
+                        Amount = tile.Amount
+                    }).ToList()
+                };
+
+                for (int i = 0; i < map.Tiles.Count; i++)
+                {
+                    TileSnapshot tile = snapshot.Tiles[i];
+                    map.Tiles[i].Prev.AddRange(ResolveTiles(map.Tiles, tile.PrevIndices));
+                    map.Tiles[i].Next.AddRange(ResolveTiles(map.Tiles, tile.NextIndices));
+                }
+
+                if (snapshot.StartIndex is int startIndex &&
+                    startIndex >= 0 && startIndex < map.Tiles.Count)
+                    map.Start = map.Tiles[startIndex];
+
+                return map;
+            }
+
+            // 기존 ReferenceHandler.Preserve JSON 형식과의 호환
+            return JsonSerializer.Deserialize<MapData>(json, LegacyMapOptions)
+                ?? new MapData();
+        }
+
+        private static List<TileData> ResolveTiles(
+            List<TileData> tiles,
+            IEnumerable<int> indices)
+        {
+            return indices
+                .Where(index => index >= 0 && index < tiles.Count)
+                .Select(index => tiles[index])
+                .ToList();
+        }
+
+        private static int FindTileIndex(List<TileData> tiles, TileData? target)
+        {
+            if (target == null)
+                return -1;
+
+            int index = tiles.FindIndex(tile => ReferenceEquals(tile, target));
+            return index >= 0
+                ? index
+                : tiles.FindIndex(tile => tile.Position == target.Position);
+        }
+
+        private static ValueComparer<MapData> CreateMapValueComparer()
+        {
+            return new ValueComparer<MapData>(
+                (left, right) => SerializeMap(left) == SerializeMap(right),
+                map => SerializeMap(map).GetHashCode(),
+                map => map == null ? null! : DeserializeMap(SerializeMap(map))
+            );
+        }
+
+        private sealed class MapSnapshot
+        {
+            public MapSnapshot() { }
+
+            public int Version { get; set; } = 1;
+            public bool IsLinked { get; set; }
+            public int? StartIndex { get; set; }
+            public List<TileSnapshot> Tiles { get; set; } = new();
+        }
+
+        private sealed class TileSnapshot
+        {
+            public TileSnapshot() { }
+
+            public Vector2 Position { get; set; }
+            public TileType Type { get; set; }
+            public int Amount { get; set; }
+            public List<int> PrevIndices { get; set; } = new();
+            public List<int> NextIndices { get; set; } = new();
         }
 
         // [추가] 내부 프로퍼티 수정까지 완벽히 감지하는 범용 JSON ValueComparer

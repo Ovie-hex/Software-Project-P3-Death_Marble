@@ -69,7 +69,7 @@ namespace Software_Project_P3_Death_Marble.Views
 
         private const int MaxRounds = 40;
 
-        private const int TileSize = 76;
+        private const int TileSize = 88;
 
         private const double TileSpacing = 112;
 
@@ -424,8 +424,8 @@ namespace Software_Project_P3_Death_Marble.Views
         {
             Point tile = tilePositions[tileIndex];
             int offsetIndex = player - 1;
-            double offsetX = offsetIndex % 2 == 0 ? 4 : 40;
-            double offsetY = offsetIndex < 2 ? 23 : 43;
+            double offsetX = offsetIndex % 2 == 0 ? 4 : TileSize - 48;
+            double offsetY = offsetIndex < 2 ? TileSize / 2.0 - 27 : TileSize - 54;
             return new Point(tile.X + offsetX, tile.Y + offsetY);
         }
 

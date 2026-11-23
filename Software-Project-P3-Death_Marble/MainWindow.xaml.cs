@@ -16,16 +16,19 @@ namespace Software_Project_P3_Death_Marble
     /// </summary>
     public partial class MainWindow : Window
     {
+        public event EventHandler? StartRequested;
+
         public MainWindow()
         {
+            InitializeComponent();
+
             // Init Modules
             new Data_Manager();
             new Stage_Customizer();
             new Game_Manager();
             new XAML_Manager();
 
-            // Init XAML Controlls
-            InitializeComponent();
+            InitialPage.StartRequested += (_, _) => StartRequested?.Invoke(this, EventArgs.Empty);
         }
     }
 }

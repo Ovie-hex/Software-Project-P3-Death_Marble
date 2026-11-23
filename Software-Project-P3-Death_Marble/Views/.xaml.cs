@@ -1,4 +1,6 @@
-﻿using System.Text;
+﻿using System;
+using System.Collections.Generic;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -9,20 +11,15 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 
-namespace Software_Project_P3_Death_Marble
+namespace Software_Project_P3_Death_Marble.Views
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// UserControl1.xaml에 대한 상호 작용 논리
     /// </summary>
-    public partial class MainWindow : Window
+    public partial class UserControl1 : UserControl
     {
-        public MainWindow()
+        public UserControl1()
         {
-            // Init Modules
-            new Data_Manager();
-            new Stage_Customizer();
-
-            // Init XAML Controlls
             InitializeComponent();
         }
     }

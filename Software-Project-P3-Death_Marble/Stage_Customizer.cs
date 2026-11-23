@@ -7,12 +7,14 @@ namespace Software_Project_P3_Death_Marble
 {
     internal class Stage_Customizer
     {
-        public Stage_Customizer() {
-            var c = Connector.getBindableEvent("a");
-            c.name = "ff";
-            c.onInvoke = (string n, dynamic d) => {
-                MessageBox.Show(Convert.ToString(d));
-            };
+        // 여기에 M(MVVM) 정의할것
+        public Stage_Customizer()
+        {
+            Connector.BindableEvent loadStageEv = Connector.GetBindableEvent("loadStageEv");
+            loadStageEv.Name = "StageCustomizerEv";
+
+            Connector.BindableEvent removeStageEv = Connector.GetBindableEvent("removeStageEv");
+            Connector.BindableEvent loadCustromizer = Connector.GetBindableEvent("loadCustromizer");
         }
     }
 }

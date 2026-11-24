@@ -15,6 +15,7 @@ namespace Software_Project_P3_Death_Marble.Views
             InitializeComponent();
 
             new Data_Manager();
+            new Stage_Customizer();
             ShowInitPage();
         }
 

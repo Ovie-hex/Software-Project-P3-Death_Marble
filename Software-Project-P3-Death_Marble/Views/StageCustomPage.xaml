@@ -132,23 +132,25 @@
                             BorderThickness="2"
                             ClipToBounds="True">
 
-                        <Viewbox Stretch="Uniform">
-
+                        <Canvas x:Name="MapViewport"
+                                Background="#170E12"
+                                ClipToBounds="True"
+                                Cursor="Hand"
+                                SizeChanged="MapViewport_SizeChanged"
+                                MouseLeftButtonDown="MapViewport_MouseLeftButtonDown"
+                                MouseMove="MapViewport_MouseMove"
+                                MouseLeftButtonUp="MapViewport_MouseLeftButtonUp"
+                                MouseRightButtonDown="MapViewport_MouseRightButtonDown"
+                                MouseWheel="MapViewport_MouseWheel">
                             <Canvas x:Name="MapCanvas"
-                                    Width="700"
-                                    Height="500"
-                                    Background="#170E12"
-                                    MouseLeftButtonDown="MapCanvas_MouseLeftButtonDown">
-
-                                <!-- 타일 및 경로가 동적으로 생성됨 -->
-
-                            </Canvas>
-                        </Viewbox>
+                                    IsHitTestVisible="False"
+                                    RenderTransformOrigin="0,0"/>
+                        </Canvas>
                     </Border>
 
                     <TextBlock Grid.Row="2"
                                x:Name="EditorStatusText"
-                               Text="격자를 클릭하여 타일을 배치하세요."
+                               Text="빈 격자를 클릭해 타일 추가 · 타일 우클릭 두 번: 삭제 · 드래그: 이동 · 휠: 확대/축소"
                                FontSize="14"
                                Foreground="#E8C6A5"
                                Margin="0,15,0,0"/>
@@ -196,7 +198,8 @@
                                   Background="#241519"
                                   Foreground="#F2C27D"
                                   BorderBrush="#A65335"
-                                  BorderThickness="2">
+                                  BorderThickness="2"
+                                  SelectionChanged="TileTypeCombo_SelectionChanged">
 
                             <ComboBoxItem Content="일반 타일"/>
                             <ComboBoxItem Content="데미지 타일"/>
@@ -204,9 +207,39 @@
                             <ComboBoxItem Content="카드 타일"/>
                             <ComboBoxItem Content="감옥 타일"/>
                             <ComboBoxItem Content="텔레포트 타일"/>
-                            <ComboBoxItem Content="함정 타일"/>
+                            <ComboBoxItem Content="구멍 타일"/>
 
                         </ComboBox>
+
+                        <TextBlock Text="선택한 타일의 유형을 바꿉니다. 빈 격자에 새 타일을 놓을 때는 기본 유형으로 사용됩니다."
+                                   Foreground="#E8C6A5"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0"/>
+
+                        <TextBlock Text="선택 타일 값 (Amount)"
+                                   Foreground="#FFE1BF"
+                                   FontSize="16"
+                                   Margin="0,16,0,8"/>
+
+                        <TextBox x:Name="TileAmountTextBox"
+                                 Text="1"
+                                 Height="42"
+                                 FontSize="17"
+                                 Foreground="#FFE1BF"
+                                 Background="#241519"
+                                 BorderBrush="#A65335"
+                                 BorderThickness="2"
+                                 Padding="10,6"
+                                 ToolTip="선택 타일의 Amount 값입니다. 새 타일 배치에도 사용됩니다."
+                                 TextChanged="TileAmountTextBox_TextChanged"
+                                 LostKeyboardFocus="TileAmountTextBox_LostKeyboardFocus"/>
+
+                        <TextBlock Text="데미지·회복 타일에 적용되는 수치입니다."
+                                   Foreground="#E8C6A5"
+                                   FontSize="13"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0"/>
 
                         <TextBlock Text="EDIT TOOLS"
                                    Style="{StaticResource PanelTitle}"
@@ -222,22 +255,246 @@
                                 BorderBrush="#C19BE5"
                                 Click="ConnectTileButton_Click"/>
 
-                        <Button Content="★ 시작 타일 지정"
-                                Style="{StaticResource PixelButton}"
-                                Background="#2B6248"
-                                BorderBrush="#7ED7A0"
-                                Click="SetStartTileButton_Click"/>
-
-                        <Button Content="X 타일 삭제"
-                                Style="{StaticResource PixelButton}"
-                                Background="#5B2222"
-                                Click="DeleteTileButton_Click"/>
-
                         <Button Content="전체 초기화"
                                 Style="{StaticResource PixelButton}"
                                 Background="#241519"
                                 BorderBrush="#825449"
                                 Click="ClearMapButton_Click"/>
+
+                        <Border Background="#29171A"
+                                BorderBrush="#71372A"
+                                BorderThickness="2"
+                                Padding="12"
+                                Margin="0,25,0,0">
+
+                            <StackPanel>
+                                <TextBlock Text="CARD EDITOR"
+                                           Style="{StaticResource PanelTitle}"
+                                           FontSize="18"
+                                           Margin="0,0,0,12"/>
+
+                                <ListBox x:Name="CardsListBox"
+                                         Height="100"
+                                         DisplayMemberPath="Card.Name"
+                                         Background="#241519"
+                                         Foreground="#FFE1BF"
+                                         BorderBrush="#A65335"
+                                         BorderThickness="2"
+                                         SelectionChanged="CardsListBox_SelectionChanged"/>
+
+                                <Grid Margin="0,8,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            Content="+ 카드 추가"
+                                            Style="{StaticResource PixelButton}"
+                                            Click="AddCardButton_Click"/>
+                                    <Button x:Name="DeleteCardButton"
+                                            Grid.Column="2"
+                                            Content="카드 삭제"
+                                            Style="{StaticResource PixelButton}"
+                                            Background="#5B2222"
+                                            BorderBrush="#D76E5E"
+                                            Click="DeleteCardButton_Click"/>
+                                </Grid>
+
+                                <TextBlock Text="카드 개수 (CardEntry.Count)"
+                                           Foreground="#FFE1BF"
+                                           FontSize="14"
+                                           Margin="0,0,0,5"/>
+                                <TextBox x:Name="CardCountTextBox"
+                                         Height="36"
+                                         FontSize="15"
+                                         Foreground="#FFE1BF"
+                                         Background="#241519"
+                                         BorderBrush="#A65335"
+                                         BorderThickness="2"
+                                         Padding="8,5"
+                                         Text="1"
+                                         TextChanged="CardCountTextBox_TextChanged"
+                                         LostKeyboardFocus="CardCountTextBox_LostKeyboardFocus"/>
+
+                                <CheckBox x:Name="CardUsableCheckBox"
+                                          Content="액티브 카드 (직접 사용 가능)"
+                                          Foreground="#FFE1BF"
+                                          FontSize="14"
+                                          Margin="0,10,0,0"
+                                          ToolTip="체크 해제하면 획득 즉시 발동하는 카드입니다."
+                                          Checked="CardUsableCheckBox_Changed"
+                                          Unchecked="CardUsableCheckBox_Changed"/>
+                                <TextBlock Text="체크 해제: 즉발 카드"
+                                           Foreground="#E8C6A5"
+                                           FontSize="12"
+                                           Margin="0,4,0,0"/>
+
+                                <TextBlock Text="카드 이름"
+                                           Foreground="#FFE1BF"
+                                           FontSize="14"
+                                           Margin="0,10,0,5"/>
+                                <TextBox x:Name="CardNameTextBox"
+                                         Height="36"
+                                         FontSize="15"
+                                         Foreground="#FFE1BF"
+                                         Background="#241519"
+                                         BorderBrush="#A65335"
+                                         BorderThickness="2"
+                                         Padding="8,5"
+                                         TextChanged="CardNameTextBox_TextChanged"/>
+
+                                <TextBlock Text="카드 설명"
+                                           Foreground="#FFE1BF"
+                                           FontSize="14"
+                                           Margin="0,10,0,5"/>
+                                <TextBox x:Name="CardDescriptionTextBox"
+                                         Height="76"
+                                         FontSize="14"
+                                         Foreground="#FFE1BF"
+                                         Background="#241519"
+                                         BorderBrush="#A65335"
+                                         BorderThickness="2"
+                                         Padding="8,5"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         TextChanged="CardDescriptionTextBox_TextChanged"/>
+
+                                <TextBlock Text="카드 효과"
+                                           Foreground="#FFE1BF"
+                                           FontSize="14"
+                                           Margin="0,12,0,5"/>
+                                <ListBox x:Name="CardEffectsListBox"
+                                         Height="120"
+                                         Background="#241519"
+                                         Foreground="#FFE1BF"
+                                         BorderBrush="#A65335"
+                                         BorderThickness="2"
+                                         SelectionChanged="CardEffectsListBox_SelectionChanged">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="2">
+                                                <TextBlock Text="{Binding Type}"
+                                                           Foreground="#F2C27D"
+                                                           FontWeight="Bold"/>
+                                                <TextBlock Foreground="#E8C6A5"
+                                                           TextWrapping="Wrap">
+                                                    <Run Text="대상: "/>
+                                                    <Run Text="{Binding Target}"/>
+                                                    <Run Text=" · 횟수: "/>
+                                                    <Run Text="{Binding Count}"/>
+                                                    <Run Text=" · 양: "/>
+                                                    <Run Text="{Binding Amount}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Grid Margin="0,8,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="AddEffectButton"
+                                            Grid.Column="0"
+                                            Content="+ 효과 추가"
+                                            Style="{StaticResource PixelButton}"
+                                            Click="AddEffectButton_Click"/>
+                                    <Button x:Name="DeleteEffectButton"
+                                            Grid.Column="2"
+                                            Content="효과 삭제"
+                                            Style="{StaticResource PixelButton}"
+                                            Background="#5B2222"
+                                            BorderBrush="#D76E5E"
+                                            Click="DeleteEffectButton_Click"/>
+                                </Grid>
+
+                                <TextBlock Text="효과 유형"
+                                           Foreground="#FFE1BF"
+                                           FontSize="14"
+                                           Margin="0,4,0,5"/>
+                                <ComboBox x:Name="EffectTypeCombo"
+                                          Height="36"
+                                          FontSize="14"
+                                          Background="#241519"
+                                          Foreground="#F2C27D"
+                                          BorderBrush="#A65335"
+                                          BorderThickness="2"
+                                          SelectionChanged="EffectTypeCombo_SelectionChanged">
+                                    <ComboBoxItem Content="효과 없음" Tag="None"/>
+                                    <ComboBoxItem Content="피해" Tag="Damage"/>
+                                    <ComboBoxItem Content="회복" Tag="Heal"/>
+                                    <ComboBoxItem Content="텔레포트" Tag="Teleport"/>
+                                    <ComboBoxItem Content="스왑" Tag="Swap"/>
+                                </ComboBox>
+
+                                <TextBlock Text="대상"
+                                           Foreground="#FFE1BF"
+                                           FontSize="14"
+                                           Margin="0,8,0,5"/>
+                                <ComboBox x:Name="EffectTargetCombo"
+                                          Height="36"
+                                          FontSize="14"
+                                          Background="#241519"
+                                          Foreground="#F2C27D"
+                                          BorderBrush="#A65335"
+                                          BorderThickness="2"
+                                          SelectionChanged="EffectTargetCombo_SelectionChanged">
+                                    <ComboBoxItem Content="자신" Tag="Self"/>
+                                    <ComboBoxItem Content="다른 플레이어" Tag="Other"/>
+                                    <ComboBoxItem Content="전체" Tag="All"/>
+                                    <ComboBoxItem Content="무작위" Tag="Random"/>
+                                </ComboBox>
+
+                                <Grid Margin="0,8,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="발동 횟수 (Count)"
+                                                   Foreground="#FFE1BF"
+                                                   FontSize="13"
+                                                   Margin="0,0,0,5"/>
+                                        <TextBox x:Name="EffectCountTextBox"
+                                                 Height="36"
+                                                 FontSize="14"
+                                                 Foreground="#FFE1BF"
+                                                 Background="#241519"
+                                                 BorderBrush="#A65335"
+                                                 BorderThickness="2"
+                                                 Padding="8,5"
+                                                 TextChanged="EffectValueTextBox_TextChanged"
+                                                 LostKeyboardFocus="EffectValueTextBox_LostKeyboardFocus"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="효과 양 (Amount)"
+                                                   Foreground="#FFE1BF"
+                                                   FontSize="13"
+                                                   Margin="0,0,0,5"/>
+                                        <TextBox x:Name="EffectAmountTextBox"
+                                                 Height="36"
+                                                 FontSize="14"
+                                                 Foreground="#FFE1BF"
+                                                 Background="#241519"
+                                                 BorderBrush="#A65335"
+                                                 BorderThickness="2"
+                                                 Padding="8,5"
+                                                 TextChanged="EffectValueTextBox_TextChanged"
+                                                 LostKeyboardFocus="EffectValueTextBox_LostKeyboardFocus"/>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Text="텔레포트와 스왑 효과는 Amount를 사용하지 않습니다."
+                                           Foreground="#E8C6A5"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           Margin="0,5,0,0"/>
+                            </StackPanel>
+                        </Border>
 
                         <Border Background="#2C1719"
                                 BorderBrush="#6D3026"
@@ -258,16 +515,26 @@
                                            Foreground="#E8C6A5"
                                            Margin="0,0,0,6"/>
 
-                                <TextBlock Text="2. 경로를 연결합니다."
+                                <TextBlock Text="2. 상하좌우로 인접한 타일만 연결할 수 있습니다. 이미 연결된 타일에도 갈림길을 추가할 수 있습니다."
+                                           Foreground="#E8C6A5"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,6"/>
+
+                                <TextBlock Text="첫 번째 타일이 시작 타일이 됩니다."
                                            Foreground="#E8C6A5"
                                            Margin="0,0,0,6"/>
 
-                                <TextBlock Text="3. 시작 타일을 지정합니다."
+                                <TextBlock Text="시작 경로와 연결할 때는 기존 진행 방향을 유지합니다. 그 외에는 클릭 순서로 방향을 정합니다."
                                            Foreground="#E8C6A5"
+                                           TextWrapping="Wrap"
                                            Margin="0,0,0,6"/>
 
                                 <TextBlock Text="4. 스테이지를 저장합니다."
                                            Foreground="#E8C6A5"/>
+
+                                <TextBlock Text="타일을 우클릭 두 번하면 삭제됩니다."
+                                           Foreground="#E8C6A5"
+                                           Margin="0,8,0,0"/>
 
                             </StackPanel>
                         </Border>

@@ -210,6 +210,19 @@ namespace Software_Project_P3_Death_Marble.Views
                 return;
             }
 
+            if (selectedStage.Map == null ||
+                !selectedStage.Map.IsLinked ||
+                selectedStage.Map.Start == null ||
+                selectedStage.Map.Tiles.Count == 0)
+            {
+                MessageBox.Show(
+                    "시작 타일에서 출발해 다시 시작 타일로 돌아오는 경로가 없습니다. 스테이지 편집에서 순환 경로를 만든 뒤 다시 시작하세요.",
+                    "DEATH MARBLE",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             GameSettings settings = new GameSettings
             {
                 PlayerCount = PlayerCountCombo.SelectedIndex + 2,

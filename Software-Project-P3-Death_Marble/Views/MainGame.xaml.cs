@@ -265,24 +265,28 @@ namespace Software_Project_P3_Death_Marble.Views
                     if (nextIndex < 0 || nextIndex == i)
                         continue;
 
-                    (int From, int To) edge = i < nextIndex
-                        ? (i, nextIndex)
-                        : (nextIndex, i);
+                    (int From, int To) edge = (i, nextIndex);
                     if (!drawnConnections.Add(edge))
                         continue;
 
-                    Point from = tilePositions[i];
-                    Point to = tilePositions[nextIndex];
-                    BoardCanvas.Children.Add(new Line
-                    {
-                        X1 = from.X + TileSize / 2.0,
-                        Y1 = from.Y + TileSize / 2.0,
-                        X2 = to.X + TileSize / 2.0,
-                        Y2 = to.Y + TileSize / 2.0,
-                        Stroke = Brushes.DarkGoldenrod,
-                        StrokeThickness = 7,
-                        IsHitTestVisible = false
-                    });
+                    Point fromCenter = new(
+                        tilePositions[i].X + TileSize / 2.0,
+                        tilePositions[i].Y + TileSize / 2.0);
+                    Point toCenter = new(
+                        tilePositions[nextIndex].X + TileSize / 2.0,
+                        tilePositions[nextIndex].Y + TileSize / 2.0);
+                    bool hasReverseConnection = mapTiles[nextIndex].Next.Any(reverse =>
+                        ReferenceEquals(reverse, mapTiles[i]) ||
+                        reverse.Position == mapTiles[i].Position);
+
+                    DrawConnectionArrow(
+                        BoardCanvas,
+                        fromCenter,
+                        toCenter,
+                        TileSize,
+                        Brushes.DarkGoldenrod,
+                        7,
+                        hasReverseConnection ? 5 : 0);
                 }
             }
 
@@ -295,6 +299,64 @@ namespace Software_Project_P3_Death_Marble.Views
                 Canvas.SetTop(tile, point.Y);
                 BoardCanvas.Children.Add(tile);
             }
+        }
+
+        private static void DrawConnectionArrow(
+            Canvas canvas,
+            Point fromCenter,
+            Point toCenter,
+            double tileSize,
+            Brush brush,
+            double strokeThickness,
+            double laneOffset)
+        {
+            double deltaX = toCenter.X - fromCenter.X;
+            double deltaY = toCenter.Y - fromCenter.Y;
+            double distance = Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+            if (distance <= 0)
+                return;
+
+            double directionX = deltaX / distance;
+            double directionY = deltaY / distance;
+            double normalX = -directionY;
+            double normalY = directionX;
+            double edgeDistance = tileSize / 2 + 1;
+
+            Point lineStart = new(
+                fromCenter.X + directionX * edgeDistance + normalX * laneOffset,
+                fromCenter.Y + directionY * edgeDistance + normalY * laneOffset);
+            Point arrowTip = new(
+                toCenter.X - directionX * edgeDistance + normalX * laneOffset,
+                toCenter.Y - directionY * edgeDistance + normalY * laneOffset);
+
+            const double arrowLength = 13;
+            const double arrowHalfWidth = 6;
+            Point arrowBase = new(
+                arrowTip.X - directionX * arrowLength,
+                arrowTip.Y - directionY * arrowLength);
+            Point arrowSide1 = new(
+                arrowBase.X + normalX * arrowHalfWidth,
+                arrowBase.Y + normalY * arrowHalfWidth);
+            Point arrowSide2 = new(
+                arrowBase.X - normalX * arrowHalfWidth,
+                arrowBase.Y - normalY * arrowHalfWidth);
+
+            canvas.Children.Add(new Line
+            {
+                X1 = lineStart.X,
+                Y1 = lineStart.Y,
+                X2 = arrowBase.X,
+                Y2 = arrowBase.Y,
+                Stroke = brush,
+                StrokeThickness = strokeThickness,
+                IsHitTestVisible = false
+            });
+            canvas.Children.Add(new Polygon
+            {
+                Points = new PointCollection { arrowTip, arrowSide1, arrowSide2 },
+                Fill = brush,
+                IsHitTestVisible = false
+            });
         }
 
         // =====================================
@@ -332,11 +394,11 @@ namespace Software_Project_P3_Death_Marble.Views
                 Text = label,
                 Foreground = Brushes.White,
                 FontFamily = new FontFamily("Consolas"),
-                FontSize = 13,
+                FontSize = 15,
                 FontWeight = FontWeights.Bold,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(3, 5, 3, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(4),
                 TextWrapping = TextWrapping.Wrap,
                 TextAlignment = TextAlignment.Center
             };

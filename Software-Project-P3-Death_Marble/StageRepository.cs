@@ -10,20 +10,29 @@ namespace Software_Project_P3_Death_Marble
             using Data data = new();
             data.Database.EnsureCreated();
 
-            return data.Stages
+            List<StageData> stages = data.Stages
                 .AsNoTracking()
                 .OrderBy(stage => stage.Name)
                 .ToList();
+
+            // 저장된 플래그 대신 시작 타일에서 출발해 돌아오는 순환 경로가 있는지 계산합니다.
+            foreach (StageData stage in stages)
+            {
+                stage.Map.RemoveNonAdjacentConnections();
+                stage.Map.IsLinked = stage.Map.HasConnectedPaths();
+            }
+
+            return stages;
         }
 
-        internal static void EnsureDefaultStage(Data data)
+        internal static void EnsureInitialStages(Data data)
         {
             MigratePreviousDefaultStage(data);
 
             if (data.Stages.Any())
                 return;
 
-            data.Stages.Add(new StageData());
+            data.Stages.AddRange(DefaultStageFactory.CreateInitialStages());
             data.SaveChanges();
         }
 
@@ -53,6 +62,9 @@ namespace Software_Project_P3_Death_Marble
         public static void SaveStage(StageData stage)
         {
             ArgumentNullException.ThrowIfNull(stage);
+
+            stage.Map.RemoveNonAdjacentConnections();
+            stage.Map.IsLinked = stage.Map.HasConnectedPaths();
 
             using Data data = new();
             data.Database.EnsureCreated();

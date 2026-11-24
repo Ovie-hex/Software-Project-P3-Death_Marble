@@ -71,6 +71,73 @@ namespace Software_Project_P3_Death_Marble
         public bool IsLinked { get; set; }
         public List<TileData> Tiles { get; set; } = new();
 
+        public void RemoveNonAdjacentConnections()
+        {
+            foreach (TileData tile in Tiles)
+            {
+                tile.Next.RemoveAll(next =>
+                    Math.Abs(tile.Position.X - next.Position.X) +
+                    Math.Abs(tile.Position.Y - next.Position.Y) != 1);
+            }
+
+            foreach (TileData tile in Tiles)
+                tile.Prev.RemoveAll(previous => !previous.Next.Contains(tile));
+        }
+
+        public bool HasConnectedPaths()
+        {
+            if (Start == null || Tiles.Count == 0)
+                return false;
+
+            TileData? startTile = Tiles.FirstOrDefault(tile =>
+                ReferenceEquals(tile, Start))
+                ?? Tiles.FirstOrDefault(tile => tile.Position == Start.Position);
+            if (startTile == null)
+                return false;
+
+            TileData? ResolveMapTile(TileData tile)
+            {
+                return Tiles.FirstOrDefault(candidate =>
+                    ReferenceEquals(candidate, tile))
+                    ?? Tiles.FirstOrDefault(candidate =>
+                        candidate.Position == tile.Position);
+            }
+
+            HashSet<TileData> visited = new() { startTile };
+            Queue<TileData> pending = new();
+            foreach (TileData next in startTile.Next)
+            {
+                TileData? mapTile = ResolveMapTile(next);
+                if (mapTile == null)
+                    continue;
+
+                if (ReferenceEquals(mapTile, startTile))
+                    return true;
+
+                if (visited.Add(mapTile))
+                    pending.Enqueue(mapTile);
+            }
+
+            while (pending.Count > 0)
+            {
+                TileData current = pending.Dequeue();
+                foreach (TileData next in current.Next)
+                {
+                    TileData? mapTile = ResolveMapTile(next);
+                    if (mapTile == null)
+                        continue;
+
+                    if (ReferenceEquals(mapTile, startTile))
+                        return true;
+
+                    if (visited.Add(mapTile))
+                        pending.Enqueue(mapTile);
+                }
+            }
+
+            return false;
+        }
+
         // [수정] JSON 역직렬화 시 타일이 중복 생성되지 않도록 기본 생성자는 비워둠
         public MapData() { }
 
@@ -125,6 +192,7 @@ namespace Software_Project_P3_Death_Marble
     {
         public string Name { get; set; } = "빈 카드";
         public string Description { get; set; } = "해당 카드의 설명을 입력하세요.";
+        public bool Usable { get; set; } = true;
         public List<EffectData> Effects { get; set; } = [new()];
     }
 

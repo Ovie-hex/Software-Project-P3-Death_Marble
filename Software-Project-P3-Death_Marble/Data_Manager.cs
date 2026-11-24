@@ -27,23 +27,30 @@ namespace Software_Project_P3_Death_Marble
         {
             try
             {
-                if (request is not LoadStagesRequest)
+                if (request is not LoadStagesRequest loadRequest)
                     throw new InvalidOperationException("잘못된 스테이지 로드 요청입니다.");
 
                 if (!defaultStageInitialized)
                 {
                     using Data data = new();
                     data.Database.EnsureCreated();
-                    StageRepository.EnsureDefaultStage(data);
+                    StageRepository.EnsureInitialStages(data);
                     defaultStageInitialized = true;
                 }
 
                 List<StageData> stages = StageRepository.LoadStages();
-                loadStagesEvent.Fire(senderName, StageEventResult.Succeeded(stages));
+                loadStagesEvent.Fire(
+                    senderName,
+                    StageEventResult.Succeeded(stages, loadRequest.RequestId));
             }
             catch (Exception exception)
             {
-                loadStagesEvent.Fire(senderName, StageEventResult.Failed(exception));
+                Guid requestId = request is LoadStagesRequest loadRequest
+                    ? loadRequest.RequestId
+                    : Guid.Empty;
+                loadStagesEvent.Fire(
+                    senderName,
+                    StageEventResult.Failed(exception, requestId));
             }
         }
 
@@ -55,11 +62,18 @@ namespace Software_Project_P3_Death_Marble
                     throw new InvalidOperationException("잘못된 스테이지 저장 요청입니다.");
 
                 StageRepository.SaveStage(saveRequest.Stage);
-                saveStageEvent.Fire(senderName, StageEventResult.Succeeded());
+                saveStageEvent.Fire(
+                    senderName,
+                    StageEventResult.Succeeded(requestId: saveRequest.RequestId));
             }
             catch (Exception exception)
             {
-                saveStageEvent.Fire(senderName, StageEventResult.Failed(exception));
+                Guid requestId = request is SaveStageRequest saveRequest
+                    ? saveRequest.RequestId
+                    : Guid.Empty;
+                saveStageEvent.Fire(
+                    senderName,
+                    StageEventResult.Failed(exception, requestId));
             }
         }
 

@@ -1,6 +1,7 @@
-<UserControl x:Class="Software_Project_P3_Death_Marble.Views.MainGame"
+﻿<UserControl x:Class="Software_Project_P3_Death_Marble.Views.MainGame"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Software_Project_P3_Death_Marble.Views"
              Background="#10080C">
 
     <UserControl.Resources>
@@ -31,6 +32,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="75"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="128"/>
             <RowDefinition Height="125"/>
         </Grid.RowDefinitions>
 
@@ -105,8 +107,8 @@
                              Stretch="Uniform">
 
                         <Canvas x:Name="BoardCanvas"
-                                Width="760"
-                                Height="540"
+                                Width="824"
+                                Height="824"
                                 Background="#201217"/>
 
                     </Viewbox>
@@ -151,28 +153,37 @@
                                    Foreground="White"
                                    Margin="0,8,0,18"/>
 
+                        <!-- 3D 주사위 -->
                         <Border Background="#29171A"
                                 BorderBrush="#A65335"
                                 BorderThickness="3"
-                                Padding="15">
+                                Padding="10">
 
                             <StackPanel>
 
-                                <TextBlock Text="DICE"
+                                <TextBlock Text="3D DICE"
                                            FontFamily="Consolas"
                                            FontSize="17"
                                            Foreground="#F2C27D"
                                            HorizontalAlignment="Center"/>
 
+                                <local:Dice3D x:Name="GameDice"
+                                              Width="160"
+                                              Height="160"
+                                              HorizontalAlignment="Center"
+                                              Margin="0,10,0,5"/>
+
                                 <TextBlock x:Name="DiceText"
-                                           Text="?"
+                                           Text="READY"
                                            FontFamily="Consolas"
-                                           FontSize="54"
-                                           FontWeight="Black"
-                                           Foreground="White"
-                                           HorizontalAlignment="Center"/>
+                                           FontSize="20"
+                                           FontWeight="Bold"
+                                           Foreground="#F2C27D"
+                                           HorizontalAlignment="Center"
+                                           Margin="0,0,0,5"/>
 
                             </StackPanel>
+
                         </Border>
 
                         <Button x:Name="RollDiceButton"
@@ -196,12 +207,30 @@
                                 Click="ExitButton_Click"/>
 
                     </StackPanel>
+
                 </ScrollViewer>
+
             </Border>
+
         </Grid>
 
+        <Border Grid.Row="2" Background="#170E12" BorderBrush="#A65335"
+                BorderThickness="2" Padding="8" Margin="0,5,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <TextBlock Text="보유 카드 · 카드를 클릭하여 사용"
+                           Foreground="#F2C27D" FontSize="15" FontWeight="Bold"/>
+                <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="HandPanel" Orientation="Horizontal"/>
+                </ScrollViewer>
+            </Grid>
+        </Border>
         <!-- 게임 로그 -->
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Background="#170E12"
                 BorderBrush="#A65335"
                 BorderThickness="3"
@@ -229,8 +258,11 @@
                     <StackPanel x:Name="GameLogPanel"/>
 
                 </ScrollViewer>
+
             </Grid>
+
         </Border>
 
     </Grid>
+
 </UserControl>

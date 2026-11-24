@@ -23,7 +23,23 @@ namespace Software_Project_P3_Death_Marble.Views
         private readonly Dictionary<int, PixelCharacter> characters = new();
         private readonly Dictionary<int, int> playerPositions = new();
         private readonly Dictionary<int, int> playerHP = new();
-        private readonly Dictionary<int, int> playerCards = new();
+        private readonly Dictionary<int, List<GameCard>> playerCards = new();
+        private readonly Dictionary<int, int> preferred = new(), prison = new(), bonus = new();
+        private readonly HashSet<int> shield = new();
+        private readonly Dictionary<int, (int Owner, int Expires, Border Marker)> traps = new();
+        private readonly Dictionary<int, List<int>> paths = new();
+        private readonly Random rng = new();
+        private bool cardUsed;
+        private static readonly GameCard[] Deck = {
+            new("지옥의 불꽃", "상대 HP -20", 0), new("악마의 분노", "모든 상대 HP -10", 1),
+            new("영혼 강탈", "상대 -15 / 자신 +15", 2), new("생명의 축복", "자신 HP +20", 3),
+            new("악마의 방패", "다음 피해 방어", 4), new("순간이동", "상대와 위치 교환", 5),
+            new("악마의 질주", "이번 이동 +3", 6), new("운명의 조작", "이번 주사위 최솟값 4", 7),
+            new("지옥의 가시", "선택 타일에 함정 설치", 8), new("속박의 사슬", "상대 다음 턴 정지", 9),
+            new("악마의 손길", "상대 카드 1장 획득", 10), new("혼돈의 계약", "무작위 HP +25 또는 -25", 11)
+        };
+        private record GameCard(string Name, string Description, int Kind);
+        private readonly HashSet<int> controlledDice = new();
 
         private readonly List<Point> tilePositions = new();
 
@@ -57,7 +73,9 @@ namespace Software_Project_P3_Death_Marble.Views
         {
         }
 
-        public MainGame(int playerCount, List<int> turnOrder)
+        public MainGame(int playerCount, List<int> turnOrder) : this(playerCount, turnOrder, null) { }
+
+        public MainGame(int playerCount, List<int> turnOrder, Dictionary<int,int>? preferences)
         {
             InitializeComponent();
 
@@ -76,6 +94,7 @@ namespace Software_Project_P3_Death_Marble.Views
             this.playerCount = playerCount;
             this.turnOrder = new List<int>(turnOrder);
 
+            foreach (int id in turnOrder) preferred[id] = preferences != null && preferences.TryGetValue(id, out int n) ? Math.Clamp(n,1,6) : 1;
             GameDice.RollCompleted += GameDice_RollCompleted;
 
             InitializePlayers();
@@ -102,7 +121,8 @@ namespace Software_Project_P3_Death_Marble.Views
             {
                 playerPositions[i] = 0;
                 playerHP[i] = MaxHP;
-                playerCards[i] = 0;
+                playerCards[i] = new List<GameCard> { Deck[rng.Next(Deck.Length)] };
+                prison[i] = 0; bonus[i] = 0;
             }
         }
 
@@ -127,36 +147,31 @@ namespace Software_Project_P3_Death_Marble.Views
             BoardCanvas.Children.Clear();
             tilePositions.Clear();
 
-            const int rows = 5;
-            const int cols = 8;
-
-            const double startX = 38;
-            const double startY = 28;
-
-            const double spacingX = 92;
-            const double spacingY = 105;
-
-            // 테스트용 뱀 형태 경로
-            for (int row = 0; row < rows; row++)
-            {
-                for (int step = 0; step < cols; step++)
-                {
-                    int col = row % 2 == 0
-                        ? step
-                        : cols - 1 - step;
-
-                    double x = startX + col * spacingX;
-                    double y = startY + row * spacingY;
-
-                    tilePositions.Add(new Point(x, y));
-                }
-            }
-
+            paths.Clear();
+            // 9 x 9 외곽 순환 + 두 내부 지름길
+            void Add(int x, int y) => tilePositions.Add(new Point(22 + x * 88, 22 + y * 88));
+            for (int x = 0; x < 9; x++) Add(x, 0);
+            for (int y = 1; y < 9; y++) Add(8, y);
+            for (int x = 7; x >= 0; x--) Add(x, 8);
+            for (int y = 7; y >= 1; y--) Add(0, y);
+            for (int i = 0; i < 32; i++) paths[i] = new List<int> { (i + 1) % 32 };
+            // 위쪽 2번에서 아래쪽 22번으로
+            for (int y = 1; y <= 7; y++) Add(2, y);
+            paths[2].Add(32);
+            for (int i = 32; i < 39; i++) paths[i] = new List<int> { i == 38 ? 22 : i + 1 };
+            // 오른쪽 12번에서 내부 경로 35번으로 합류
+            for (int x = 7; x >= 3; x--) Add(x, 4);
+            paths[12].Add(39);
+            for (int i = 39; i < 44; i++) paths[i] = new List<int> { i == 43 ? 35 : i + 1 };
+            for (int x = 3; x <= 7; x++) Add(x, 6);
+            paths[37].Add(44);
+            for (int i = 44; i < 49; i++) paths[i] = new List<int> { i == 48 ? 14 : i + 1 };
             // 타일 연결선
-            for (int i = 0; i < tilePositions.Count - 1; i++)
+            for (int i = 0; i < tilePositions.Count; i++)
+            foreach (int next in paths[i])
             {
                 Point from = tilePositions[i];
-                Point to = tilePositions[i + 1];
+                Point to = tilePositions[next];
 
                 Line line = new Line
                 {
@@ -164,7 +179,7 @@ namespace Software_Project_P3_Death_Marble.Views
                     Y1 = from.Y + TileSize / 2.0,
                     X2 = to.X + TileSize / 2.0,
                     Y2 = to.Y + TileSize / 2.0,
-                    Stroke = Brushes.DarkGoldenrod,
+                    Stroke = i >= 32 || next >= 32 ? Brushes.MediumPurple : Brushes.DarkGoldenrod,
                     StrokeThickness = 7
                 };
 
@@ -193,6 +208,8 @@ namespace Software_Project_P3_Death_Marble.Views
                 background = Brushes.DarkRed;
                 tileText = "START";
             }
+            else if (index == 11 || index == 31) { background = Brushes.DarkSlateGray; tileText = "PRISON"; }
+            else if (index == 16 || index == 34) { background = Brushes.Teal; tileText = "WARP"; }
             else if (index % 9 == 0)
             {
                 background = Brushes.DarkSlateBlue;
@@ -439,7 +456,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 {
                     Text =
                         $"TILE {playerPositions[player]}  |  " +
-                        $"CARD {playerCards[player]}",
+                        $"CARD {playerCards[player].Count} | PICK {preferred[player]}",
                     Foreground = Brushes.LightGray,
                     FontSize = 12
                 });
@@ -473,6 +490,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 ? "SUDDEN DEATH"
                 : "NORMAL MODE";
 
+            RefreshHand();
             SuddenDeathText.Foreground = suddenDeath
                 ? Brushes.OrangeRed
                 : Brushes.Bisque;
@@ -494,7 +512,9 @@ namespace Software_Project_P3_Death_Marble.Views
             if (playerHP[player] <= 0)
                 return;
 
+            if (prison[player] > 0) { prison[player]--; AddGameLog($"PLAYER {player}: 이동 제한"); FinishSkippedTurn(player); return; }
             isRolling = true;
+            RefreshHand();
 
             RollDiceButton.IsEnabled = false;
 
@@ -504,7 +524,9 @@ namespace Software_Project_P3_Death_Marble.Views
                 $"PLAYER {player}: 주사위 굴리는 중...");
 
             // 3D 주사위 회전
-            GameDice.Roll();
+            int result = DiceProbability.Roll(rng, preferred[player], playerHP[player], MaxHP);
+            if (controlledDice.Remove(player)) result = Math.Max(4, result);
+            GameDice.Roll(result);
         }
 
         private void GameDice_RollCompleted(
@@ -524,7 +546,8 @@ namespace Software_Project_P3_Death_Marble.Views
                 $"PLAYER {player}: 주사위 {result}");
 
             // 주사위 회전이 끝난 후 이동
-            StartMove(player, result);
+            StartMove(player, result + bonus[player]);
+            bonus[player] = 0;
         }
 
         // =====================================
@@ -576,8 +599,16 @@ namespace Software_Project_P3_Death_Marble.Views
             int currentPosition =
                 playerPositions[movingPlayer];
 
-            int nextPosition =
-                (currentPosition + 1) % tilePositions.Count;
+            var choices = paths[currentPosition];
+            int nextPosition = choices[0];
+            if (choices.Count > 1) {
+                moveTimer?.Stop();
+                int recommended = PathAdvisor.Recommend(choices, remainingSteps, paths, t => TileScore(t, movingPlayer));
+                int? choice = Choose("운명의 갈림길", choices.Select(t => (t, $"{(t >= 32 ? "내부 경로" : "외곽 경로")} · 타일 {t}\n예상 평가: {PathAdvisor.Score(t, remainingSteps, paths, n => TileScore(n, movingPlayer)):+0;-0;0}")), recommended,
+                    $"크크크… 남은 이동은 {remainingSteps}칸. 현재 HP {playerHP[movingPlayer]}와 도착 타일의 효과를 고려하면 {recommended}번 방향이 유리하겠군.");
+                nextPosition = choice ?? recommended;
+                moveTimer?.Start();
+            }
 
             AnimateCharacterMove(
                 movingPlayer, nextPosition);
@@ -710,91 +741,81 @@ namespace Software_Project_P3_Death_Marble.Views
             int player,
             int position)
         {
-            int oldHP = playerHP[player];
-
-            if (position == 0)
-            {
-                AddGameLog(
-                    $"PLAYER {player}: START 도착");
+            if (traps.TryGetValue(position, out var trap) && trap.Owner != player) {
+                BoardCanvas.Children.Remove(trap.Marker); traps.Remove(position); ChangeHP(player,-20); AddGameLog("함정 발동!");
             }
-            else if (position % 9 == 0)
-            {
-                playerCards[player]++;
-
-                AddGameLog(
-                    $"PLAYER {player}: 카드 획득! " +
-                    $"(보유 {playerCards[player]}장)");
+            if (playerHP[player] <= 0) return;
+            if (position == 11 || position == 31) { prison[player]++; AddGameLog("다음 턴 이동 제한"); }
+            else if (position == 16 || position == 34) { Relocate(player, rng.Next(tilePositions.Count)); AddGameLog("순간이동"); }
+            else if (position != 0 && position % 9 == 0) {
+                if (playerCards[player].Count < 3) { var card = Deck[rng.Next(Deck.Length)]; playerCards[player].Add(card); AddGameLog($"카드 획득: {card.Name}"); }
+                else AddGameLog("카드 보유 한도 3장");
             }
-            else if (position % 7 == 0)
-            {
-                playerHP[player] = Math.Min(
-                    MaxHP,
-                    playerHP[player] + 15);
+            else if (position != 0 && position % 7 == 0) ChangeHP(player,15);
+            else if (position != 0 && position % 5 == 0) ChangeHP(player,-15);
+            ApplySuddenDeathTo(player);
+        }
 
-                AddGameLog(
-                    $"PLAYER {player}: HP 회복");
-            }
-            else if (position % 5 == 0)
-            {
-                playerHP[player] = Math.Max(
-                    0,
-                    playerHP[player] - 15);
-
-                AddGameLog(
-                    $"PLAYER {player}: HP 감소");
-            }
-
-            // 임시 서든데스 규칙
-            if (currentRound >= 20)
-            {
-                playerHP[player] = Math.Max(
-                    0,
-                    playerHP[player] - 5);
-
-                AddGameLog(
-                    $"PLAYER {player}: 서든데스 HP -5");
-            }
-
-            // 실제 변화량
-            int hpChange = playerHP[player] - oldHP;
-
-            if (hpChange < 0)
-            {
-                if (characters.TryGetValue(
-                    player,
-                    out PixelCharacter? character))
-                {
-                    character.PlayDamageEffect();
-                }
-
-                ShowHPChangeText(player, hpChange);
-            }
-            else if (hpChange > 0)
-            {
-                if (characters.TryGetValue(
-                    player,
-                    out PixelCharacter? character))
-                {
-                    character.PlayHealEffect();
-                }
-
-                ShowHPChangeText(player, hpChange);
-            }
-
-            if (playerHP[player] <= 0)
-            {
-                AddGameLog(
-                    $"PLAYER {player} 탈락!");
-
-                if (characters.TryGetValue(
-                    player,
-                    out PixelCharacter? character))
-                {
-                    character.Visibility =
-                        Visibility.Collapsed;
-                }
+        private void ApplySuddenDeathTo(int player) {
+            if (currentRound >= 20 && playerHP[player] > 0) ChangeHP(player, -(5 + (currentRound-20)/5*5));
+        }
+        private void FinishSkippedTurn(int player) {
+            bonus[player]=0; controlledDice.Remove(player); ApplySuddenDeathTo(player); UpdatePlayerStatus(); if (!CheckGameEnd()) NextTurn();
+        }
+        private void ChangeHP(int player, int delta) {
+            if (playerHP[player] <= 0) return;
+            if (delta < 0 && shield.Remove(player)) { AddGameLog($"PLAYER {player}: 방패 발동"); return; }
+            int old = playerHP[player]; playerHP[player] = Math.Clamp(old+delta,0,MaxHP);
+            int change = playerHP[player]-old;
+            if (change != 0) { if(change<0) characters[player].PlayDamageEffect(); else characters[player].PlayHealEffect(); ShowHPChangeText(player,change); AddGameLog($"PLAYER {player}: HP {change:+0;-0}"); }
+            if(playerHP[player]==0) { characters[player].Visibility=Visibility.Collapsed; AddGameLog($"PLAYER {player} 탈락"); }
+        }
+        private void Relocate(int player,int tile) { playerPositions[player]=tile; UpdateCharacterPosition(player); }
+        private int TileScore(int t,int player) {
+            int score = t==0 ? 0 : t==11 || t==31 ? -20 : t==16 || t==34 ? -3 : t%9==0 ? 12 : t%7==0 ? Math.Min(15,MaxHP-playerHP[player]) : t%5==0 ? -15 : 0;
+            if(traps.TryGetValue(t,out var trap) && trap.Owner!=player) score-=20; return score;
+        }
+        private int? Choose(string title, IEnumerable<(int Id,string Label)> options, int? recommended = null, string? dialogue = null)
+        {
+            return FateDialog.Choose(Window.GetWindow(this), title, options, recommended, dialogue);
+        }
+        private void RefreshHand() {
+            HandPanel.Children.Clear(); int player=turnOrder[turnIndex];
+            foreach(var card in playerCards[player].ToArray()) {
+                var button=new Button { Content=new TextBlock { Text=card.Name+"\n"+card.Description, TextWrapping=TextWrapping.Wrap, Foreground=Brushes.Bisque }, Width=145, Height=72, Margin=new Thickness(4), Background=Brushes.DarkSlateBlue, BorderBrush=Brushes.Goldenrod, IsEnabled=!cardUsed&&!isMoving&&!isRolling&&!gameEnded };
+                button.Click += (_,_)=>UseGameCard(card); HandPanel.Children.Add(button);
             }
         }
+        private void UseGameCard(GameCard card) {
+            if(cardUsed||isMoving||isRolling||gameEnded||isClosing) return;
+            int p=turnOrder[turnIndex]; if(!playerCards[p].Contains(card)) return;
+            int target=0;
+            if(card.Kind is 0 or 2 or 5 or 9 or 10) {
+                int? selected=Choose("대상 선택", playerHP.Where(x=>x.Key!=p&&x.Value>0&&(card.Kind!=10||playerCards[x.Key].Count>0)).Select(x=>(x.Key,$"PLAYER {x.Key} · HP {x.Value} · 카드 {playerCards[x.Key].Count}장")));
+                if(!selected.HasValue) return; target=selected.Value;
+            }
+            if(card.Kind==8) {
+                int? tile=Choose("함정 설치 타일", Enumerable.Range(1,tilePositions.Count-1).Where(t=>!traps.ContainsKey(t)).Select(t=>(t,$"타일 {t}")));
+                if(!tile.HasValue) return;
+                var marker=new Border { Width=TileSize, Height=TileSize, BorderBrush=Brushes.MediumPurple, BorderThickness=new Thickness(5), IsHitTestVisible=false };
+                Canvas.SetLeft(marker,tilePositions[tile.Value].X); Canvas.SetTop(marker,tilePositions[tile.Value].Y); BoardCanvas.Children.Add(marker); traps[tile.Value]=(p,currentRound+3,marker);
+            }
+            switch(card.Kind) {
+                case 0: ChangeHP(target,-20); break;
+                case 1: foreach(int other in turnOrder.Where(x=>x!=p)) ChangeHP(other,-10); break;
+                case 2: ChangeHP(target,-15); ChangeHP(p,15); break;
+                case 3: ChangeHP(p,20); break;
+                case 4: shield.Add(p); break;
+                case 5: int old=playerPositions[p]; Relocate(p,playerPositions[target]); Relocate(target,old); break;
+                case 6: bonus[p]=3; break;
+                case 7: controlledDice.Add(p); break;
+                case 9: prison[target]++; break;
+                case 10: var stolen=playerCards[target][rng.Next(playerCards[target].Count)]; playerCards[target].Remove(stolen); playerCards[p].Add(stolen); break;
+                case 11: ChangeHP(p,rng.Next(2)==0?25:-25); break;
+            }
+            playerCards[p].Remove(card); cardUsed=true; AddGameLog($"PLAYER {p}: {card.Name} 사용"); UpdatePlayerStatus(); RefreshHand(); if(!CheckGameEnd()&&playerHP[p]==0) NextTurn();
+        }
+        public List<Player> ResultPlayers() => playerHP.Select(x=> { var p=new Player(x.Key,$"PLAYER {x.Key}",new TileData()); p.TakeDamage(MaxHP-x.Value); return p; }).ToList();
 
         // =====================================
         // 다음 턴
@@ -810,6 +831,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 {
                     turnIndex = 0;
                     currentRound++;
+                    foreach(var t in traps.Where(x=>x.Value.Expires<=currentRound).Select(x=>x.Key).ToArray()) { BoardCanvas.Children.Remove(traps[t].Marker); traps.Remove(t); }
                 }
 
                 int player = turnOrder[turnIndex];
@@ -822,6 +844,7 @@ namespace Software_Project_P3_Death_Marble.Views
                         return;
                     }
 
+                    cardUsed = false;
                     DiceText.Text = "READY";
 
                     RollDiceButton.IsEnabled = true;

@@ -4,6 +4,8 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 
@@ -12,53 +14,38 @@ namespace Software_Project_P3_Death_Marble.Views
     public partial class MainGame : UserControl
     {
         // =====================================
-        // 기본 설정
+        // 기본 데이터
         // =====================================
 
-        private readonly Random random = new Random();
-
         private readonly int playerCount;
-
         private readonly List<int> turnOrder;
 
         private readonly Dictionary<int, PixelCharacter> characters = new();
-
         private readonly Dictionary<int, int> playerPositions = new();
-
         private readonly Dictionary<int, int> playerHP = new();
-
         private readonly Dictionary<int, int> playerCards = new();
 
         private readonly List<Point> tilePositions = new();
 
-        private readonly List<Border> tileBorders = new();
-
         private DispatcherTimer? moveTimer;
+        private DispatcherTimer? finishTimer;
 
-        private int turnIndex = 0;
-
+        private int turnIndex;
         private int currentRound = 1;
 
-        private int remainingSteps = 0;
+        private int movingPlayer;
+        private int remainingSteps;
 
-        private int movingPlayer = 0;
-
-        private bool isMoving = false;
-
-        private bool gameEnded = false;
+        private bool isMoving;
+        private bool isRolling;
+        private bool gameEnded;
+        private bool isClosing;
 
         private const int MaxHP = 100;
-
         private const int MaxRounds = 40;
-
         private const int TileSize = 76;
 
-        // =====================================
-        // 이벤트
-        // =====================================
-
         public event EventHandler? ExitRequested;
-
         public event EventHandler<int?>? GameFinished;
 
         // =====================================
@@ -70,17 +57,12 @@ namespace Software_Project_P3_Death_Marble.Views
         {
         }
 
-        public MainGame(
-            int playerCount,
-            List<int> turnOrder)
+        public MainGame(int playerCount, List<int> turnOrder)
         {
             InitializeComponent();
 
             if (playerCount < 2 || playerCount > 4)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(playerCount));
-            }
+                throw new ArgumentOutOfRangeException(nameof(playerCount));
 
             if (turnOrder == null ||
                 turnOrder.Count != playerCount ||
@@ -88,26 +70,22 @@ namespace Software_Project_P3_Death_Marble.Views
                 turnOrder.Any(p => p < 1 || p > playerCount))
             {
                 throw new ArgumentException(
-                    "올바른 턴 순서가 아닙니다.",
-                    nameof(turnOrder));
+                    "플레이어 수 또는 턴 순서가 올바르지 않습니다.");
             }
 
             this.playerCount = playerCount;
-
             this.turnOrder = new List<int>(turnOrder);
 
+            GameDice.RollCompleted += GameDice_RollCompleted;
+
             InitializePlayers();
-
             CreateBoard();
-
             CreateCharacters();
 
             UpdatePlayerStatus();
-
             UpdateTurnDisplay();
 
             AddGameLog("DEATH MARBLE 게임 시작!");
-
             AddGameLog(
                 "턴 순서: " +
                 string.Join(" → ",
@@ -123,16 +101,10 @@ namespace Software_Project_P3_Death_Marble.Views
             for (int i = 1; i <= playerCount; i++)
             {
                 playerPositions[i] = 0;
-
                 playerHP[i] = MaxHP;
-
                 playerCards[i] = 0;
             }
         }
-
-        // =====================================
-        // 플레이어 색상
-        // =====================================
 
         private Brush GetPlayerColor(int player)
         {
@@ -153,22 +125,18 @@ namespace Software_Project_P3_Death_Marble.Views
         private void CreateBoard()
         {
             BoardCanvas.Children.Clear();
-
             tilePositions.Clear();
 
-            tileBorders.Clear();
+            const int rows = 5;
+            const int cols = 8;
 
-            // 5행 × 8열 뱀 형태의 테스트 경로
-            // 총 40개 타일
-            int rows = 5;
-            int cols = 8;
+            const double startX = 38;
+            const double startY = 28;
 
-            double startX = 55;
-            double startY = 45;
+            const double spacingX = 92;
+            const double spacingY = 105;
 
-            double spacingX = 92;
-            double spacingY = 105;
-
+            // 테스트용 뱀 형태 경로
             for (int row = 0; row < rows; row++)
             {
                 for (int step = 0; step < cols; step++)
@@ -178,7 +146,6 @@ namespace Software_Project_P3_Death_Marble.Views
                         : cols - 1 - step;
 
                     double x = startX + col * spacingX;
-
                     double y = startY + row * spacingY;
 
                     tilePositions.Add(new Point(x, y));
@@ -189,17 +156,14 @@ namespace Software_Project_P3_Death_Marble.Views
             for (int i = 0; i < tilePositions.Count - 1; i++)
             {
                 Point from = tilePositions[i];
-
                 Point to = tilePositions[i + 1];
 
                 Line line = new Line
                 {
                     X1 = from.X + TileSize / 2.0,
                     Y1 = from.Y + TileSize / 2.0,
-
                     X2 = to.X + TileSize / 2.0,
                     Y2 = to.Y + TileSize / 2.0,
-
                     Stroke = Brushes.DarkGoldenrod,
                     StrokeThickness = 7
                 };
@@ -207,30 +171,21 @@ namespace Software_Project_P3_Death_Marble.Views
                 BoardCanvas.Children.Add(line);
             }
 
-            // 타일 생성
+            // 타일 표시
             for (int i = 0; i < tilePositions.Count; i++)
             {
                 Border tile = CreateTile(i);
 
-                Point point = tilePositions[i];
-
-                Canvas.SetLeft(tile, point.X);
-                Canvas.SetTop(tile, point.Y);
+                Canvas.SetLeft(tile, tilePositions[i].X);
+                Canvas.SetTop(tile, tilePositions[i].Y);
 
                 BoardCanvas.Children.Add(tile);
-
-                tileBorders.Add(tile);
             }
         }
-
-        // =====================================
-        // 타일 생성
-        // =====================================
 
         private Border CreateTile(int index)
         {
             Brush background;
-
             string tileText;
 
             if (index == 0)
@@ -267,8 +222,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 Height = TileSize,
                 Background = background,
                 BorderBrush = Brushes.Goldenrod,
-                BorderThickness = new Thickness(3),
-                CornerRadius = new CornerRadius(0)
+                BorderThickness = new Thickness(3)
             };
 
             TextBlock text = new TextBlock
@@ -276,7 +230,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 Text = tileText,
                 Foreground = Brushes.White,
                 FontFamily = new FontFamily("Consolas"),
-                FontSize = index == 0 ? 13 : 16,
+                FontSize = 15,
                 FontWeight = FontWeights.Bold,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
@@ -284,7 +238,6 @@ namespace Software_Project_P3_Death_Marble.Views
             };
 
             Grid grid = new Grid();
-
             grid.Children.Add(text);
 
             border.Child = grid;
@@ -293,7 +246,7 @@ namespace Software_Project_P3_Death_Marble.Views
         }
 
         // =====================================
-        // 픽셀 캐릭터 생성
+        // 캐릭터 생성
         // =====================================
 
         private void CreateCharacters()
@@ -315,16 +268,29 @@ namespace Software_Project_P3_Death_Marble.Views
             UpdateAllCharacterPositions();
         }
 
-        // =====================================
-        // 캐릭터 위치 갱신
-        // =====================================
-
         private void UpdateAllCharacterPositions()
         {
             foreach (int player in characters.Keys)
-            {
                 UpdateCharacterPosition(player);
-            }
+        }
+
+        private Point GetCharacterCanvasPosition(
+            int player,
+            int tileIndex)
+        {
+            Point tile = tilePositions[tileIndex];
+
+            int offsetIndex = player - 1;
+
+            double offsetX =
+                offsetIndex % 2 == 0 ? 0 : 30;
+
+            double offsetY =
+                offsetIndex < 2 ? 18 : 36;
+
+            return new Point(
+                tile.X + offsetX,
+                tile.Y + offsetY);
         }
 
         private void UpdateCharacterPosition(int player)
@@ -332,47 +298,94 @@ namespace Software_Project_P3_Death_Marble.Views
             if (!characters.TryGetValue(
                 player,
                 out PixelCharacter? character))
-            {
                 return;
-            }
 
-            if (!playerPositions.TryGetValue(
-                player,
-                out int position))
-            {
+            int position = playerPositions[player];
+
+            if (position < 0 || position >= tilePositions.Count)
                 return;
-            }
 
-            if (position < 0 ||
-                position >= tilePositions.Count)
-            {
-                return;
-            }
+            Point point =
+                GetCharacterCanvasPosition(player, position);
 
-            Point tile = tilePositions[position];
-
-            // 같은 타일에 4명이 있어도 겹치지 않도록 배치
-            int offsetIndex = player - 1;
-
-            double offsetX = offsetIndex % 2 == 0
-                ? 4
-                : 40;
-
-            double offsetY = offsetIndex < 2
-                ? 29
-                : 49;
-
-            Canvas.SetLeft(
-                character,
-                tile.X + offsetX);
-
-            Canvas.SetTop(
-                character,
-                tile.Y + offsetY);
+            Canvas.SetLeft(character, point.X);
+            Canvas.SetTop(character, point.Y);
         }
 
         // =====================================
-        // 플레이어 상태 표시
+        // HP 변화 텍스트
+        // =====================================
+
+        private void ShowHPChangeText(int player, int amount)
+        {
+            if (amount == 0 || isClosing)
+                return;
+
+            if (!characters.ContainsKey(player))
+                return;
+
+            int position = playerPositions[player];
+
+            Point point =
+                GetCharacterCanvasPosition(player, position);
+
+            TextBlock effectText = new TextBlock
+            {
+                Text = amount > 0
+                    ? $"+{amount} HP"
+                    : $"{amount} HP",
+
+                Foreground = amount > 0
+                    ? Brushes.LimeGreen
+                    : Brushes.OrangeRed,
+
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 20,
+                FontWeight = FontWeights.Black,
+
+                Effect = new DropShadowEffect
+                {
+                    Color = Colors.Black,
+                    BlurRadius = 5,
+                    ShadowDepth = 2
+                }
+            };
+
+            Canvas.SetLeft(effectText, point.X - 5);
+            Canvas.SetTop(effectText, point.Y - 15);
+
+            Panel.SetZIndex(effectText, 200);
+
+            BoardCanvas.Children.Add(effectText);
+
+            DoubleAnimation floatUp = new DoubleAnimation
+            {
+                From = point.Y - 15,
+                To = point.Y - 50,
+                Duration = TimeSpan.FromMilliseconds(900)
+            };
+
+            DoubleAnimation fadeOut = new DoubleAnimation
+            {
+                From = 1,
+                To = 0,
+                Duration = TimeSpan.FromMilliseconds(900)
+            };
+
+            fadeOut.Completed += (sender, args) =>
+            {
+                BoardCanvas.Children.Remove(effectText);
+            };
+
+            effectText.BeginAnimation(
+                Canvas.TopProperty, floatUp);
+
+            effectText.BeginAnimation(
+                OpacityProperty, fadeOut);
+        }
+
+        // =====================================
+        // 플레이어 상태 UI
         // =====================================
 
         private void UpdatePlayerStatus()
@@ -387,57 +400,49 @@ namespace Software_Project_P3_Death_Marble.Views
                 {
                     Background = new SolidColorBrush(
                         Color.FromRgb(39, 23, 28)),
-
                     BorderBrush = GetPlayerColor(player),
-
                     BorderThickness = new Thickness(2),
-
                     Padding = new Thickness(10),
-
                     Margin = new Thickness(0, 4, 0, 4)
                 };
 
                 StackPanel panel = new StackPanel();
 
-                TextBlock name = new TextBlock
+                panel.Children.Add(new TextBlock
                 {
                     Text = $"PLAYER {player}",
                     Foreground = GetPlayerColor(player),
                     FontFamily = new FontFamily("Consolas"),
                     FontSize = 17,
                     FontWeight = FontWeights.Bold
-                };
+                });
 
-                ProgressBar hpBar = new ProgressBar
+                panel.Children.Add(new ProgressBar
                 {
                     Minimum = 0,
                     Maximum = MaxHP,
                     Value = hp,
                     Height = 13,
                     Margin = new Thickness(0, 8, 0, 5)
-                };
+                });
 
-                TextBlock hpText = new TextBlock
+                panel.Children.Add(new TextBlock
                 {
                     Text = hp > 0
                         ? $"HP {hp} / {MaxHP}"
                         : "ELIMINATED",
-
                     Foreground = Brushes.Bisque,
                     FontSize = 13
-                };
+                });
 
-                TextBlock positionText = new TextBlock
+                panel.Children.Add(new TextBlock
                 {
-                    Text = $"TILE {playerPositions[player]}",
+                    Text =
+                        $"TILE {playerPositions[player]}  |  " +
+                        $"CARD {playerCards[player]}",
                     Foreground = Brushes.LightGray,
                     FontSize = 12
-                };
-
-                panel.Children.Add(name);
-                panel.Children.Add(hpBar);
-                panel.Children.Add(hpText);
-                panel.Children.Add(positionText);
+                });
 
                 border.Child = panel;
 
@@ -446,7 +451,7 @@ namespace Software_Project_P3_Death_Marble.Views
         }
 
         // =====================================
-        // 현재 턴 표시
+        // 턴 표시
         // =====================================
 
         private void UpdateTurnDisplay()
@@ -457,33 +462,31 @@ namespace Software_Project_P3_Death_Marble.Views
             int player = turnOrder[turnIndex];
 
             CurrentTurnText.Text = $"PLAYER {player}";
-
-            CurrentTurnText.Foreground =
-                GetPlayerColor(player);
+            CurrentTurnText.Foreground = GetPlayerColor(player);
 
             RoundText.Text =
                 $"ROUND {currentRound:00} / {MaxRounds}";
 
-            SuddenDeathText.Text =
-                currentRound >= 20
-                    ? "SUDDEN DEATH"
-                    : "NORMAL MODE";
+            bool suddenDeath = currentRound >= 20;
 
-            SuddenDeathText.Foreground =
-                currentRound >= 20
-                    ? Brushes.OrangeRed
-                    : Brushes.Bisque;
+            SuddenDeathText.Text = suddenDeath
+                ? "SUDDEN DEATH"
+                : "NORMAL MODE";
+
+            SuddenDeathText.Foreground = suddenDeath
+                ? Brushes.OrangeRed
+                : Brushes.Bisque;
         }
 
         // =====================================
-        // 주사위
+        // 3D 주사위
         // =====================================
 
         private void RollDiceButton_Click(
             object sender,
             RoutedEventArgs e)
         {
-            if (isMoving || gameEnded)
+            if (isMoving || isRolling || gameEnded || isClosing)
                 return;
 
             int player = turnOrder[turnIndex];
@@ -491,18 +494,41 @@ namespace Software_Project_P3_Death_Marble.Views
             if (playerHP[player] <= 0)
                 return;
 
-            int diceValue = random.Next(1, 7);
+            isRolling = true;
 
-            DiceText.Text = diceValue.ToString();
+            RollDiceButton.IsEnabled = false;
+
+            DiceText.Text = "ROLLING...";
 
             AddGameLog(
-                $"PLAYER {player}: 주사위 {diceValue}");
+                $"PLAYER {player}: 주사위 굴리는 중...");
 
-            StartMove(player, diceValue);
+            // 3D 주사위 회전
+            GameDice.Roll();
+        }
+
+        private void GameDice_RollCompleted(
+            object? sender,
+            int result)
+        {
+            if (gameEnded || isClosing || !isRolling)
+                return;
+
+            isRolling = false;
+
+            DiceText.Text = result.ToString();
+
+            int player = turnOrder[turnIndex];
+
+            AddGameLog(
+                $"PLAYER {player}: 주사위 {result}");
+
+            // 주사위 회전이 끝난 후 이동
+            StartMove(player, result);
         }
 
         // =====================================
-        // 이동 시작
+        // 캐릭터 이동
         // =====================================
 
         private void StartMove(int player, int diceValue)
@@ -510,14 +536,13 @@ namespace Software_Project_P3_Death_Marble.Views
             isMoving = true;
 
             movingPlayer = player;
-
             remainingSteps = diceValue;
 
             RollDiceButton.IsEnabled = false;
 
             moveTimer?.Stop();
+            finishTimer?.Stop();
 
-            // 캐릭터 걷기 시작
             if (characters.TryGetValue(
                 player,
                 out PixelCharacter? character))
@@ -534,14 +559,14 @@ namespace Software_Project_P3_Death_Marble.Views
 
             moveTimer.Start();
         }
-        // =====================================
-        // 타일 단위 이동
-        // =====================================
 
         private void MoveTimer_Tick(
             object? sender,
             EventArgs e)
         {
+            if (gameEnded || isClosing || !isMoving)
+                return;
+
             if (remainingSteps <= 0)
             {
                 FinishMove();
@@ -551,36 +576,109 @@ namespace Software_Project_P3_Death_Marble.Views
             int currentPosition =
                 playerPositions[movingPlayer];
 
-            // 마지막 타일 다음에는 시작 타일로
             int nextPosition =
                 (currentPosition + 1) % tilePositions.Count;
+
+            AnimateCharacterMove(
+                movingPlayer, nextPosition);
 
             playerPositions[movingPlayer] = nextPosition;
 
             remainingSteps--;
 
-            // 캐릭터를 다음 타일로 이동
-            UpdateCharacterPosition(movingPlayer);
-
             UpdatePlayerStatus();
 
             if (remainingSteps == 0)
             {
-                FinishMove();
+                moveTimer?.Stop();
+
+                finishTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(300)
+                };
+
+                finishTimer.Tick += FinishTimer_Tick;
+
+                finishTimer.Start();
             }
         }
 
-        // =====================================
-        // 이동 완료
-        // =====================================
+        private void FinishTimer_Tick(
+            object? sender,
+            EventArgs e)
+        {
+            finishTimer?.Stop();
+
+            if (!gameEnded && !isClosing && isMoving)
+                FinishMove();
+        }
+
+        private void AnimateCharacterMove(
+            int player,
+            int nextPosition)
+        {
+            if (!characters.TryGetValue(
+                player,
+                out PixelCharacter? character))
+                return;
+
+            Point target =
+                GetCharacterCanvasPosition(player, nextPosition);
+
+            double currentX = Canvas.GetLeft(character);
+            double currentY = Canvas.GetTop(character);
+
+            character.BeginAnimation(
+                Canvas.LeftProperty, null);
+
+            character.BeginAnimation(
+                Canvas.TopProperty, null);
+
+            Canvas.SetLeft(character, currentX);
+            Canvas.SetTop(character, currentY);
+
+            DoubleAnimation moveX = new DoubleAnimation
+            {
+                From = currentX,
+                To = target.X,
+                Duration = TimeSpan.FromMilliseconds(280),
+                FillBehavior = FillBehavior.Stop
+            };
+
+            DoubleAnimation moveY = new DoubleAnimation
+            {
+                From = currentY,
+                To = target.Y,
+                Duration = TimeSpan.FromMilliseconds(280),
+                FillBehavior = FillBehavior.Stop
+            };
+
+            moveX.Completed += (sender, args) =>
+            {
+                character.BeginAnimation(
+                    Canvas.LeftProperty, null);
+
+                character.BeginAnimation(
+                    Canvas.TopProperty, null);
+
+                Canvas.SetLeft(character, target.X);
+                Canvas.SetTop(character, target.Y);
+            };
+
+            character.BeginAnimation(
+                Canvas.LeftProperty, moveX);
+
+            character.BeginAnimation(
+                Canvas.TopProperty, moveY);
+        }
 
         private void FinishMove()
         {
             moveTimer?.Stop();
+            finishTimer?.Stop();
 
             isMoving = false;
 
-            // 캐릭터 걷기 종료
             if (characters.TryGetValue(
                 movingPlayer,
                 out PixelCharacter? character))
@@ -588,7 +686,8 @@ namespace Software_Project_P3_Death_Marble.Views
                 character.StopWalking();
             }
 
-            int position = playerPositions[movingPlayer];
+            int position =
+                playerPositions[movingPlayer];
 
             AddGameLog(
                 $"PLAYER {movingPlayer}: 타일 {position} 도착");
@@ -602,6 +701,7 @@ namespace Software_Project_P3_Death_Marble.Views
 
             NextTurn();
         }
+
         // =====================================
         // 타일 이벤트
         // =====================================
@@ -610,15 +710,14 @@ namespace Software_Project_P3_Death_Marble.Views
             int player,
             int position)
         {
+            int oldHP = playerHP[player];
+
             if (position == 0)
             {
                 AddGameLog(
                     $"PLAYER {player}: START 도착");
-
-                return;
             }
-
-            if (position % 9 == 0)
+            else if (position % 9 == 0)
             {
                 playerCards[player]++;
 
@@ -633,7 +732,7 @@ namespace Software_Project_P3_Death_Marble.Views
                     playerHP[player] + 15);
 
                 AddGameLog(
-                    $"PLAYER {player}: HP +15");
+                    $"PLAYER {player}: HP 회복");
             }
             else if (position % 5 == 0)
             {
@@ -642,10 +741,10 @@ namespace Software_Project_P3_Death_Marble.Views
                     playerHP[player] - 15);
 
                 AddGameLog(
-                    $"PLAYER {player}: HP -15");
+                    $"PLAYER {player}: HP 감소");
             }
 
-            // 20라운드부터 적용되는 임시 서든데스 규칙
+            // 임시 서든데스 규칙
             if (currentRound >= 20)
             {
                 playerHP[player] = Math.Max(
@@ -656,8 +755,37 @@ namespace Software_Project_P3_Death_Marble.Views
                     $"PLAYER {player}: 서든데스 HP -5");
             }
 
+            // 실제 변화량
+            int hpChange = playerHP[player] - oldHP;
+
+            if (hpChange < 0)
+            {
+                if (characters.TryGetValue(
+                    player,
+                    out PixelCharacter? character))
+                {
+                    character.PlayDamageEffect();
+                }
+
+                ShowHPChangeText(player, hpChange);
+            }
+            else if (hpChange > 0)
+            {
+                if (characters.TryGetValue(
+                    player,
+                    out PixelCharacter? character))
+                {
+                    character.PlayHealEffect();
+                }
+
+                ShowHPChangeText(player, hpChange);
+            }
+
             if (playerHP[player] <= 0)
             {
+                AddGameLog(
+                    $"PLAYER {player} 탈락!");
+
                 if (characters.TryGetValue(
                     player,
                     out PixelCharacter? character))
@@ -665,9 +793,6 @@ namespace Software_Project_P3_Death_Marble.Views
                     character.Visibility =
                         Visibility.Collapsed;
                 }
-
-                AddGameLog(
-                    $"PLAYER {player} 탈락!");
             }
         }
 
@@ -677,9 +802,6 @@ namespace Software_Project_P3_Death_Marble.Views
 
         private void NextTurn()
         {
-            int previousIndex = turnIndex;
-
-            // 다음 생존 플레이어 탐색
             for (int i = 0; i < turnOrder.Count; i++)
             {
                 turnIndex++;
@@ -687,7 +809,6 @@ namespace Software_Project_P3_Death_Marble.Views
                 if (turnIndex >= turnOrder.Count)
                 {
                     turnIndex = 0;
-
                     currentRound++;
                 }
 
@@ -701,7 +822,7 @@ namespace Software_Project_P3_Death_Marble.Views
                         return;
                     }
 
-                    DiceText.Text = "?";
+                    DiceText.Text = "READY";
 
                     RollDiceButton.IsEnabled = true;
 
@@ -714,31 +835,27 @@ namespace Software_Project_P3_Death_Marble.Views
                 }
             }
 
-            // 생존자가 없다면 게임 종료
             EndGameByHP();
         }
 
         // =====================================
-        // 게임 종료 검사
+        // 게임 종료
         // =====================================
 
         private bool CheckGameEnd()
         {
-            List<int> alivePlayers =
-                playerHP
-                    .Where(p => p.Value > 0)
-                    .Select(p => p.Key)
-                    .ToList();
+            List<int> alivePlayers = playerHP
+                .Where(p => p.Value > 0)
+                .Select(p => p.Key)
+                .ToList();
 
             if (alivePlayers.Count <= 1)
             {
-                int? winner =
-                    alivePlayers.Count == 1
-                        ? alivePlayers[0]
-                        : null;
+                int? winner = alivePlayers.Count == 1
+                    ? alivePlayers[0]
+                    : null;
 
                 EndGame(winner);
-
                 return true;
             }
 
@@ -754,11 +871,9 @@ namespace Software_Project_P3_Death_Marble.Views
                 .Select(p => p.Key)
                 .ToList();
 
-            // 최고 HP 동점이면 공동 결과 처리
-            int? winner =
-                leaders.Count == 1
-                    ? leaders[0]
-                    : null;
+            int? winner = leaders.Count == 1
+                ? leaders[0]
+                : null;
 
             EndGame(winner);
         }
@@ -770,7 +885,7 @@ namespace Software_Project_P3_Death_Marble.Views
 
             gameEnded = true;
 
-            moveTimer?.Stop();
+            StopAnimations();
 
             RollDiceButton.IsEnabled = false;
 
@@ -781,7 +896,8 @@ namespace Software_Project_P3_Death_Marble.Views
             }
             else
             {
-                AddGameLog("게임 종료: 공동 결과");
+                AddGameLog(
+                    "게임 종료: 무승부");
             }
 
             GameFinished?.Invoke(this, winner);
@@ -795,15 +911,18 @@ namespace Software_Project_P3_Death_Marble.Views
         {
             TextBlock log = new TextBlock
             {
-                Text = $"[{DateTime.Now:HH:mm:ss}] {message}",
+                Text =
+                    $"[{DateTime.Now:HH:mm:ss}] {message}",
 
                 Foreground = Brushes.Bisque,
 
-                FontFamily = new FontFamily("Consolas"),
+                FontFamily =
+                    new FontFamily("Consolas"),
 
                 FontSize = 13,
 
-                Margin = new Thickness(0, 2, 0, 2)
+                Margin =
+                    new Thickness(0, 2, 0, 2)
             };
 
             GameLogPanel.Children.Add(log);
@@ -812,20 +931,39 @@ namespace Software_Project_P3_Death_Marble.Views
         }
 
         // =====================================
-        // 종료 버튼
+        // 애니메이션 종료
+        // =====================================
+
+        private void StopAnimations()
+        {
+            moveTimer?.Stop();
+            finishTimer?.Stop();
+
+            GameDice.StopRolling();
+
+            isMoving = false;
+            isRolling = false;
+
+            foreach (PixelCharacter character in characters.Values)
+            {
+                character.StopAllAnimations();
+            }
+        }
+
+        // =====================================
+        // 게임 종료 버튼
         // =====================================
 
         private void ExitButton_Click(
-     object sender,
-     RoutedEventArgs e)
+            object sender,
+            RoutedEventArgs e)
         {
-            moveTimer?.Stop();
+            if (isClosing)
+                return;
 
-            // 모든 캐릭터 애니메이션 정지
-            foreach (PixelCharacter character in characters.Values)
-            {
-                character.StopWalking();
-            }
+            isClosing = true;
+
+            StopAnimations();
 
             ExitRequested?.Invoke(this, EventArgs.Empty);
         }

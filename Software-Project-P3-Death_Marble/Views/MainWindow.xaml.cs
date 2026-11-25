@@ -1,6 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Linq;
 
 namespace Software_Project_P3_Death_Marble.Views
 {
@@ -9,6 +12,7 @@ namespace Software_Project_P3_Death_Marble.Views
         private GameSettings? currentSettings;
 
         private List<int> currentTurnOrder = new();
+        private Dictionary<int,int> preferences = new();
 
         public MainWindow()
         {
@@ -90,7 +94,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 currentTurnOrder =
                     new List<int>(turnOrder);
 
-                ShowMainGame();
+                ShowPreferences();
             };
 
             MainContainer.Children.Add(page);
@@ -99,6 +103,19 @@ namespace Software_Project_P3_Death_Marble.Views
         // =====================================
         // 메인 게임 화면
         // =====================================
+
+        private void ShowPreferences()
+        {
+            preferences.Clear();
+            foreach (int id in currentTurnOrder)
+            {
+                int? pick = FateDialog.Choose(this, $"PLAYER {id} · 운명의 숫자", Enumerable.Range(1, 6).Select(n => (n, $"{"⚀⚁⚂⚃⚄⚅"[n-1]}   {n}")), null,
+                    "체력이 높을수록 선택한 숫자가 나올 확률이 높아집니다.");
+                if (!pick.HasValue) { ShowSettingPage(); return; }
+                preferences[id] = pick.Value;
+            }
+            ShowMainGame();
+        }
 
         private void ShowMainGame()
         {
@@ -110,7 +127,8 @@ namespace Software_Project_P3_Death_Marble.Views
             MainGame page = new MainGame(
                 currentSettings.PlayerCount,
                 currentTurnOrder,
-                currentSettings.Stage);
+                currentSettings.Stage,
+                preferences);
 
             page.ExitRequested += (s, e) =>
             {
@@ -119,17 +137,11 @@ namespace Software_Project_P3_Death_Marble.Views
 
             page.GameFinished += (s, winner) =>
             {
-                string message = winner.HasValue
-                    ? $"PLAYER {winner.Value} 승리!"
-                    : "게임이 공동 결과로 종료되었습니다.";
-
-                MessageBox.Show(
-                    message,
-                    "DEATH MARBLE",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-
-                ShowSettingPage();
+                var players=page.ResultPlayers();
+                var result=new ResultPage(); result.ShowResult(players,players.FirstOrDefault(p=>p.Id==winner));
+                result.ReplayRequested+=(_,_)=>ShowRoulettePage(currentSettings.PlayerCount);
+                result.MainMenuRequested+=(_,_)=>ShowInitPage();
+                MainContainer.Children.Clear(); MainContainer.Children.Add(result);
             };
 
             MainContainer.Children.Add(page);

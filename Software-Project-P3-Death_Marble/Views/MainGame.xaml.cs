@@ -1,8 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -14,44 +15,56 @@ namespace Software_Project_P3_Death_Marble.Views
 {
     public partial class MainGame : UserControl
     {
-        private readonly Random random = new();
         private readonly int playerCount;
         private readonly List<int> turnOrder;
         private readonly StageData stage;
+        private readonly Game_Manager gameManager;
+        private readonly Connector.BindableEvent gameConnector;
 
         private readonly Dictionary<int, PixelCharacter> characters = new();
+        private readonly Dictionary<int, ProgressBar> characterHealthBars = new();
         private readonly Dictionary<int, int> playerPositions = new();
         private readonly Dictionary<int, int> playerHP = new();
         private readonly Dictionary<int, List<CardData>> playerCards = new();
-        private readonly Dictionary<int, int> preferredDice = new();
         private readonly Dictionary<int, int> prisonTurns = new();
         private readonly List<Point> tilePositions = new();
+        private GameStateSnapshot? gameState;
 
         private readonly ScaleTransform boardScale = new(1, 1);
         private readonly TranslateTransform boardTranslation = new();
         private readonly TransformGroup boardTransform = new();
 
         private DispatcherTimer? moveTimer;
+        private readonly DispatcherTimer rollHoldTimer;
+        private int pendingTargetCardIndex = -1;
+        private int pendingTargetOwner = -1;
+        private bool pendingTargetIsImmediate;
 
         private int turnIndex;
         private int currentRound = 1;
-        private int remainingSteps;
         private int movingPlayer;
+        private int? pendingTeleportPlayer;
+        private int pendingTeleportSourceTile = -1;
 
         private bool isMoving;
         private bool isRolling;
         private bool isClosing;
-        private bool cardUsed;
+        private bool connectionsDisposed;
         private bool gameEnded;
         private bool hasInitialBoardView;
         private bool isDraggingBoard;
+        private bool hasRolledThisTurn;
+        private bool isRollPressActive;
+        private bool isChoosingDice;
+        private bool isTeleportClickCandidate;
+
+        private int? hoveredDiceChoice;
 
         private Point dragStart;
         private double dragTranslationX;
         private double dragTranslationY;
 
         private const int MaxHP = 100;
-        private const int MaxRounds = 40;
         private const int TileSize = 88;
         private const double TileSpacing = 112;
         private const double BoardMargin = 56;
@@ -70,8 +83,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 {
                     Name = "기본 스테이지",
                     Map = MapData.CreateDefault()
-                },
-                null)
+                })
         {
         }
 
@@ -83,21 +95,11 @@ namespace Software_Project_P3_Death_Marble.Views
                 {
                     Name = "기본 스테이지",
                     Map = MapData.CreateDefault()
-                },
-                null)
+                })
         {
         }
 
         public MainGame(int playerCount, List<int> turnOrder, StageData stage)
-            : this(playerCount, turnOrder, stage, null)
-        {
-        }
-
-        public MainGame(
-            int playerCount,
-            List<int> turnOrder,
-            StageData stage,
-            Dictionary<int, int>? preferences)
         {
             InitializeComponent();
 
@@ -117,6 +119,9 @@ namespace Software_Project_P3_Death_Marble.Views
             this.playerCount = playerCount;
             this.turnOrder = new List<int>(turnOrder);
             this.stage = stage ?? throw new ArgumentNullException(nameof(stage));
+            BoardNameText.Text = string.IsNullOrWhiteSpace(stage.Name)
+                ? "이름 없는 스테이지"
+                : stage.Name;
 
             if (stage.Map.Start == null)
                 throw new ArgumentException("스테이지에 시작 타일이 없습니다.", nameof(stage));
@@ -127,46 +132,182 @@ namespace Software_Project_P3_Death_Marble.Views
             if (!stage.Map.Tiles.Any(tile => ReferenceEquals(tile, stage.Map.Start)))
                 stage.Map.Tiles.Insert(0, stage.Map.Start);
 
-            foreach (int id in this.turnOrder)
-            {
-                preferredDice[id] =
-                    preferences != null && preferences.TryGetValue(id, out int value)
-                        ? Math.Clamp(value, 1, 6)
-                        : 1;
-            }
+            gameManager = new Game_Manager();
+            gameConnector = Connector.GetBindableEvent(GameConnectorNames.Bus);
+            gameConnector.Name = GameConnectorNames.MainGame;
+            gameConnector.OnInvoke = GameConnector_OnInvoke;
 
             GameDice.RollCompleted += GameDice_RollCompleted;
+
+            rollHoldTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(250)
+            };
+            rollHoldTimer.Tick += RollHoldTimer_Tick;
 
             boardTransform.Children.Add(boardScale);
             boardTransform.Children.Add(boardTranslation);
             BoardCanvas.RenderTransform = boardTransform;
 
-            Loaded += (_, _) => FitBoardToViewport();
+            Loaded += (_, _) =>
+            {
+                FitBoardToViewport();
+                RefreshHand();
+            };
 
-            InitializePlayers();
             CreateBoard();
             CreateCharacters();
-            UpdatePlayerStatus();
-            UpdateTurnDisplay();
-
-            AddGameLog("DEATH MARBLE 게임 시작!");
-            AddGameLog("턴 순서: " + string.Join(" → ", turnOrder.Select(p => $"P{p}")));
+            CreateDiceChoiceButtons();
+            SendGameCommand(new GameCommand
+            {
+                Type = GameCommandType.Initialize,
+                Stage = this.stage,
+                TurnOrder = this.turnOrder.ToList()
+            });
         }
 
-        private void InitializePlayers()
+        private void SendGameCommand(GameCommand command)
         {
-            int startIndex = GetTileIndex(stage.Map.Start!);
+            if (!isClosing)
+                gameConnector.Fire(GameConnectorNames.GameManager, command);
+        }
 
-            for (int player = 1; player <= playerCount; player++)
+        private void GameConnector_OnInvoke(string sender, dynamic? payload)
+        {
+            if (payload is not GameManagerMessage message || isClosing)
+                return;
+
+            bool isFirstState = gameState == null;
+            ApplyGameState(message.State);
+
+            switch (message.Type)
             {
-                playerPositions[player] = startIndex;
-                playerHP[player] = MaxHP;
-                playerCards[player] = new List<CardData>();
-                prisonTurns[player] = 0;
+                case GameMessageType.Log:
+                    AddGameLog(message.Text);
+                    break;
+                case GameMessageType.DiceRolled:
+                    DiceText.Text = "ROLLING...";
+                    GameDice.Roll(message.Value);
+                    break;
+                case GameMessageType.PlayerMoved:
+                    PathChoiceOverlay.Visibility = Visibility.Collapsed;
+                    if (characters.TryGetValue(message.PlayerId, out PixelCharacter? movingCharacter))
+                    {
+                        if (gameState?.IsMoving == true)
+                            movingCharacter.StartWalking();
+                        else
+                            movingCharacter.StopWalking();
+                    }
+                    AnimateCharacterToTile(message.PlayerId, message.Value);
+                    if (gameState?.IsMoving == true)
+                        moveTimer?.Start();
+                    break;
+                case GameMessageType.MovementFinished:
+                    moveTimer?.Stop();
+                    if (characters.TryGetValue(message.PlayerId, out PixelCharacter? arrivedCharacter))
+                        arrivedCharacter.StopWalking();
+                    break;
+                case GameMessageType.PathSelectionRequired:
+                    ShowPathChoices(message.OptionIndices);
+                    break;
+                case GameMessageType.TeleportSelectionRequired:
+                    pendingTeleportPlayer = message.PlayerId;
+                    pendingTeleportSourceTile = message.Value;
+                    TeleportTargetText.Text = $"PLAYER {message.PlayerId}: 맵을 드래그해 이동한 뒤 목적지 타일을 클릭하세요.";
+                    TeleportTargetOverlay.Visibility = Visibility.Visible;
+                    BoardViewport.Cursor = Cursors.Cross;
+                    break;
+                case GameMessageType.CardTargetSelectionRequired:
+                    ShowCardTargetSelection(message);
+                    break;
+                case GameMessageType.GameEnded:
+                    StopAnimations();
+                    DisposeGameConnections();
+                    GameFinished?.Invoke(this, message.WinnerId);
+                    break;
+                case GameMessageType.Error:
+                    AddGameLog($"게임 처리 오류: {message.Text}");
+                    break;
+            }
 
-                CardData? startingCard = DrawRandomCard();
-                if (startingCard != null)
-                    playerCards[player].Add(startingCard);
+            if (isFirstState)
+                UpdateAllCharacterPositions();
+
+            UpdatePlayerStatus();
+            UpdateTurnDisplay();
+            RefreshHand();
+            UpdateRollButtonState();
+        }
+
+        private void ApplyGameState(GameStateSnapshot? snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            Dictionary<int, int> previousHp = playerHP.ToDictionary(entry => entry.Key, entry => entry.Value);
+
+            gameState = snapshot;
+            currentRound = snapshot.CurrentRound;
+            turnIndex = Math.Max(0, snapshot.TurnOrder.IndexOf(snapshot.CurrentPlayerId));
+            movingPlayer = snapshot.CurrentPlayerId;
+            isMoving = snapshot.IsMoving;
+            hasRolledThisTurn = snapshot.HasRolledThisTurn;
+            gameEnded = !snapshot.IsGameRunning;
+
+            playerPositions.Clear();
+            playerHP.Clear();
+            playerCards.Clear();
+            prisonTurns.Clear();
+            foreach (GamePlayerSnapshot player in snapshot.Players)
+            {
+                playerPositions[player.Id] = player.TileIndex;
+                playerHP[player.Id] = player.HP;
+                playerCards[player.Id] = player.Cards;
+                prisonTurns[player.Id] = player.PrisonTurns;
+
+                if (previousHp.TryGetValue(player.Id, out int oldHp))
+                {
+                    int hpChange = player.HP - oldHp;
+                    if (hpChange != 0)
+                    {
+                        if (characters.TryGetValue(player.Id, out PixelCharacter? character))
+                        {
+                            if (hpChange < 0)
+                                character.PlayDamageEffect();
+                            else
+                                character.PlayHealEffect();
+                        }
+                        ShowHPChangeText(player.Id, hpChange);
+                    }
+
+                }
+
+                if (characterHealthBars.TryGetValue(player.Id, out ProgressBar? healthBar))
+                {
+                    healthBar.Value = player.HP;
+                    healthBar.ToolTip = $"PLAYER {player.Id} · HP {player.HP} / {player.MaxHP}";
+                    if (player.IsEliminated)
+                        healthBar.Visibility = Visibility.Collapsed;
+                }
+                if (player.IsEliminated && characters.TryGetValue(player.Id, out PixelCharacter? eliminated))
+                    eliminated.Visibility = Visibility.Collapsed;
+            }
+
+            if (!snapshot.IsWaitingForTeleport)
+            {
+                pendingTeleportPlayer = null;
+                pendingTeleportSourceTile = -1;
+                TeleportTargetOverlay.Visibility = Visibility.Collapsed;
+                BoardViewport.Cursor = Cursors.Hand;
+            }
+
+            if (!snapshot.IsWaitingForCardTarget && pendingTargetOwner >= 0)
+            {
+                pendingTargetCardIndex = -1;
+                pendingTargetOwner = -1;
+                pendingTargetIsImmediate = false;
+                CardTargetOverlay.Visibility = Visibility.Collapsed;
+                CardTargetButtons.Children.Clear();
             }
         }
 
@@ -351,7 +492,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 TileType.Prison => (Brushes.SaddleBrown, "PRISON"),
                 TileType.Teleport => (Brushes.DarkCyan, "PORTAL"),
                 TileType.Hole => (Brushes.Black, "HOLE"),
-                _ => (new SolidColorBrush(Color.FromRgb(53, 35, 41)), "ZONE")
+                _ => (new SolidColorBrush(Color.FromRgb(53, 35, 41)), string.Empty)
             };
 
             if (isStart)
@@ -366,24 +507,28 @@ namespace Software_Project_P3_Death_Marble.Views
                 BorderThickness = new Thickness(isStart ? 4 : 3)
             };
 
-            TextBlock text = new TextBlock
-            {
-                Text = label,
-                Foreground = Brushes.White,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 15,
-                FontWeight = FontWeights.Bold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(4),
-                TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center
-            };
-
             Grid grid = new Grid();
-            grid.Children.Add(text);
+            if (!string.IsNullOrWhiteSpace(label))
+            {
+                grid.Children.Add(new TextBlock
+                {
+                    Text = label,
+                    Foreground = Brushes.White,
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 15,
+                    FontWeight = FontWeights.Bold,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(4),
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = TextAlignment.Center
+                });
+            }
+
             border.Child = grid;
-            border.ToolTip = $"{label} · ({tile.Position.X}, {tile.Position.Y})";
+            border.ToolTip = string.IsNullOrWhiteSpace(label)
+                ? $"({tile.Position.X}, {tile.Position.Y})"
+                : $"{label} · ({tile.Position.X}, {tile.Position.Y})";
 
             return border;
         }
@@ -391,6 +536,7 @@ namespace Software_Project_P3_Death_Marble.Views
         private void CreateCharacters()
         {
             characters.Clear();
+            characterHealthBars.Clear();
 
             for (int player = 1; player <= playerCount; player++)
             {
@@ -398,6 +544,24 @@ namespace Software_Project_P3_Death_Marble.Views
                 characters[player] = character;
                 Panel.SetZIndex(character, 100);
                 BoardCanvas.Children.Add(character);
+
+                ProgressBar healthBar = new()
+                {
+                    Width = 56,
+                    Height = 8,
+                    Minimum = 0,
+                    Maximum = MaxHP,
+                    Value = MaxHP,
+                    Foreground = GetPlayerColor(player),
+                    Background = Brushes.DarkSlateGray,
+                    BorderBrush = Brushes.Black,
+                    BorderThickness = new Thickness(1),
+                    ToolTip = $"PLAYER {player} · HP {MaxHP} / {MaxHP}",
+                    IsHitTestVisible = false
+                };
+                characterHealthBars[player] = healthBar;
+                Panel.SetZIndex(healthBar, 110);
+                BoardCanvas.Children.Add(healthBar);
             }
 
             UpdateAllCharacterPositions();
@@ -422,8 +586,36 @@ namespace Software_Project_P3_Death_Marble.Views
             Point point = GetCharacterPosition(player, position);
             Canvas.SetLeft(character, point.X);
             Canvas.SetTop(character, point.Y);
+
+            if (characterHealthBars.TryGetValue(player, out ProgressBar? healthBar))
+            {
+                Canvas.SetLeft(healthBar, point.X - 4);
+                Canvas.SetTop(healthBar, point.Y - 10);
+            }
         }
 
+        private void QueueCardTargetSelection(int targetPlayer, int cardIndex, int ownerPlayer, bool isImmediate)
+        {
+            foreach (Button button in CardTargetButtons.Children.OfType<Button>())
+                button.IsEnabled = false;
+
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            {
+                if (isClosing || gameEnded ||
+                    pendingTargetCardIndex != cardIndex ||
+                    pendingTargetOwner != ownerPlayer ||
+                    pendingTargetIsImmediate != isImmediate)
+                {
+                    return;
+                }
+
+                SendGameCommand(new GameCommand
+                {
+                    Type = GameCommandType.SelectCardTarget,
+                    PlayerId = targetPlayer
+                });
+            }));
+        }
         private Point GetCharacterPosition(int player, int tileIndex)
         {
             Point tile = tilePositions[tileIndex];
@@ -454,13 +646,29 @@ namespace Software_Project_P3_Death_Marble.Views
             Point from = new(Canvas.GetLeft(character), Canvas.GetTop(character));
             Point to = GetCharacterPosition(player, tileIndex);
 
-            Canvas.SetLeft(character, to.X);
-            Canvas.SetTop(character, to.Y);
-
             Duration duration = TimeSpan.FromMilliseconds(380);
             CubicEase easing = new() { EasingMode = EasingMode.EaseOut };
 
-            character.BeginAnimation(Canvas.LeftProperty, new DoubleAnimation
+            AnimateCanvasElement(character, from, to, duration, easing);
+            if (characterHealthBars.TryGetValue(player, out ProgressBar? healthBar))
+                AnimateCanvasElement(healthBar, new Point(Canvas.GetLeft(healthBar), Canvas.GetTop(healthBar)), new Point(to.X - 4, to.Y - 10), duration, easing);
+
+            FocusCameraOnTile(tileIndex, duration);
+        }
+
+        private static void AnimateCanvasElement(
+            UIElement element,
+            Point from,
+            Point to,
+            Duration duration,
+            IEasingFunction easing)
+        {
+            if (double.IsNaN(from.X) || double.IsNaN(from.Y))
+                from = to;
+
+            Canvas.SetLeft(element, to.X);
+            Canvas.SetTop(element, to.Y);
+            element.BeginAnimation(Canvas.LeftProperty, new DoubleAnimation
             {
                 From = from.X,
                 To = to.X,
@@ -468,8 +676,7 @@ namespace Software_Project_P3_Death_Marble.Views
                 EasingFunction = easing,
                 FillBehavior = FillBehavior.Stop
             });
-
-            character.BeginAnimation(Canvas.TopProperty, new DoubleAnimation
+            element.BeginAnimation(Canvas.TopProperty, new DoubleAnimation
             {
                 From = from.Y,
                 To = to.Y,
@@ -477,8 +684,6 @@ namespace Software_Project_P3_Death_Marble.Views
                 EasingFunction = easing,
                 FillBehavior = FillBehavior.Stop
             });
-
-            FocusCameraOnTile(tileIndex, duration);
         }
 
         private void FitBoardToViewport()
@@ -571,6 +776,20 @@ namespace Software_Project_P3_Death_Marble.Views
 
         private void BoardViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            if (pendingTeleportPlayer.HasValue)
+            {
+                e.Handled = true;
+                StopCameraAnimation();
+                isDraggingBoard = true;
+                isTeleportClickCandidate = true;
+                dragStart = e.GetPosition(BoardViewport);
+                dragTranslationX = boardTranslation.X;
+                dragTranslationY = boardTranslation.Y;
+                BoardViewport.CaptureMouse();
+                BoardViewport.Cursor = Cursors.SizeAll;
+                return;
+            }
+
             StopCameraAnimation();
             isDraggingBoard = true;
             dragStart = e.GetPosition(BoardViewport);
@@ -581,12 +800,57 @@ namespace Software_Project_P3_Death_Marble.Views
             e.Handled = true;
         }
 
+        private int GetTileIndexAtViewportPoint(Point viewportPoint)
+        {
+            double scale = boardScale.ScaleX;
+            if (scale <= 0)
+                return -1;
+
+            Point boardPoint = new(
+                (viewportPoint.X - boardTranslation.X) / scale,
+                (viewportPoint.Y - boardTranslation.Y) / scale);
+
+            for (int index = 0; index < tilePositions.Count; index++)
+            {
+                Point tile = tilePositions[index];
+                if (boardPoint.X >= tile.X && boardPoint.X <= tile.X + TileSize &&
+                    boardPoint.Y >= tile.Y && boardPoint.Y <= tile.Y + TileSize)
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private void QueueTeleportDestination(int destination)
+        {
+            if (pendingTeleportPlayer == null ||
+                destination < 0 ||
+                destination >= stage.Map.Tiles.Count ||
+                destination == pendingTeleportSourceTile)
+            {
+                return;
+            }
+
+            SendGameCommand(new GameCommand
+            {
+                Type = GameCommandType.SelectTeleportDestination,
+                TileIndex = destination
+            });
+        }
         private void BoardViewport_MouseMove(object sender, MouseEventArgs e)
         {
             if (!isDraggingBoard)
                 return;
 
             Point point = e.GetPosition(BoardViewport);
+            if (isTeleportClickCandidate &&
+                (Math.Abs(point.X - dragStart.X) > 5 || Math.Abs(point.Y - dragStart.Y) > 5))
+            {
+                isTeleportClickCandidate = false;
+            }
+
             boardTranslation.X = dragTranslationX + point.X - dragStart.X;
             boardTranslation.Y = dragTranslationY + point.Y - dragStart.Y;
         }
@@ -596,9 +860,27 @@ namespace Software_Project_P3_Death_Marble.Views
             if (!isDraggingBoard)
                 return;
 
+            Point releasePoint = e.GetPosition(BoardViewport);
+            bool selectTile = pendingTeleportPlayer.HasValue &&
+                isTeleportClickCandidate &&
+                Math.Abs(releasePoint.X - dragStart.X) <= 5 &&
+                Math.Abs(releasePoint.Y - dragStart.Y) <= 5;
+
             isDraggingBoard = false;
+            isTeleportClickCandidate = false;
             BoardViewport.ReleaseMouseCapture();
-            BoardViewport.Cursor = Cursors.Hand;
+            BoardViewport.Cursor = pendingTeleportPlayer.HasValue
+                ? Cursors.Cross
+                : Cursors.Hand;
+
+            if (selectTile)
+            {
+                int destination = GetTileIndexAtViewportPoint(releasePoint);
+                if (destination >= 0 && destination != pendingTeleportSourceTile)
+                    QueueTeleportDestination(destination);
+            }
+
+            e.Handled = true;
         }
 
         private void BoardViewport_MouseWheel(object sender, MouseWheelEventArgs e)
@@ -644,73 +926,69 @@ namespace Software_Project_P3_Death_Marble.Views
         {
             PlayerStatusPanel.Children.Clear();
 
-            for (int player = 1; player <= playerCount; player++)
+            if (gameState == null || turnOrder.Count == 0 ||
+                !playerHP.TryGetValue(gameState.CurrentPlayerId, out int hp))
+                return;
+
+            int player = gameState.CurrentPlayerId;
+            Border border = new()
             {
-                int hp = playerHP[player];
+                Background = new SolidColorBrush(Color.FromRgb(39, 23, 28)),
+                BorderBrush = GetPlayerColor(player),
+                BorderThickness = new Thickness(2),
+                Padding = new Thickness(8),
+                Margin = new Thickness(0, 2, 0, 2)
+            };
 
-                Border border = new Border
-                {
-                    Background = new SolidColorBrush(Color.FromRgb(39, 23, 28)),
-                    BorderBrush = GetPlayerColor(player),
-                    BorderThickness = new Thickness(2),
-                    Padding = new Thickness(10),
-                    Margin = new Thickness(0, 4, 0, 4)
-                };
+            StackPanel panel = new();
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"PLAYER {player}",
+                Foreground = GetPlayerColor(player),
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 16,
+                FontWeight = FontWeights.Bold
+            });
+            panel.Children.Add(new ProgressBar
+            {
+                Minimum = 0,
+                Maximum = MaxHP,
+                Value = hp,
+                Height = 11,
+                Margin = new Thickness(0, 4, 0, 3),
+                Foreground = GetPlayerColor(player)
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = hp > 0 ? $"HP {hp} / {MaxHP}" : "ELIMINATED",
+                Foreground = Brushes.Bisque,
+                FontSize = 12
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"TILE {playerPositions[player]}  |  " +
+                       $"ACTIVE CARDS {playerCards[player].Count}/3" +
+                       (prisonTurns[player] > 0 ? "  |  PRISON" : ""),
+                Foreground = Brushes.LightGray,
+                FontSize = 11
+            });
 
-                StackPanel panel = new StackPanel();
-
-                panel.Children.Add(new TextBlock
-                {
-                    Text = $"PLAYER {player}",
-                    Foreground = GetPlayerColor(player),
-                    FontFamily = new FontFamily("Consolas"),
-                    FontSize = 17,
-                    FontWeight = FontWeights.Bold
-                });
-
-                panel.Children.Add(new ProgressBar
-                {
-                    Minimum = 0,
-                    Maximum = MaxHP,
-                    Value = hp,
-                    Height = 13,
-                    Margin = new Thickness(0, 8, 0, 5)
-                });
-
-                panel.Children.Add(new TextBlock
-                {
-                    Text = hp > 0 ? $"HP {hp} / {MaxHP}" : "ELIMINATED",
-                    Foreground = Brushes.Bisque,
-                    FontSize = 13
-                });
-
-                panel.Children.Add(new TextBlock
-                {
-                    Text = $"TILE {playerPositions[player]}  |  " +
-                           $"CARD {playerCards[player].Count}  |  " +
-                           $"PICK {preferredDice[player]}" +
-                           (prisonTurns[player] > 0 ? "  |  PRISON" : ""),
-                    Foreground = Brushes.LightGray,
-                    FontSize = 12
-                });
-
-                border.Child = panel;
-                PlayerStatusPanel.Children.Add(border);
-            }
+            border.Child = panel;
+            PlayerStatusPanel.Children.Add(border);
         }
 
         private void UpdateTurnDisplay()
         {
-            if (gameEnded)
+            if (gameState == null || gameEnded || turnOrder.Count == 0)
                 return;
 
-            int player = turnOrder[turnIndex];
+            int player = gameState.CurrentPlayerId;
 
             CurrentTurnText.Text = $"PLAYER {player}";
             CurrentTurnText.Foreground = GetPlayerColor(player);
-            RoundText.Text = $"ROUND {currentRound:00} / {MaxRounds}";
+            RoundText.Text = $"ROUND {currentRound:00} / {gameState.MaximumRound}";
 
-            bool suddenDeath = currentRound >= 20;
+            bool suddenDeath = gameState.IsSuddenDeath;
             SuddenDeathText.Text = suddenDeath ? "SUDDEN DEATH" : "NORMAL MODE";
             SuddenDeathText.Foreground = suddenDeath
                 ? Brushes.OrangeRed
@@ -719,29 +997,207 @@ namespace Software_Project_P3_Death_Marble.Views
             RefreshHand();
         }
 
-        private void RollDiceButton_Click(object sender, RoutedEventArgs e)
+        private void CreateDiceChoiceButtons()
         {
-            if (isMoving || isRolling || gameEnded || isClosing)
+            DiceChoicePanel.Children.Clear();
+            DiceChoicePanel.RowDefinitions.Clear();
+            DiceChoicePanel.ColumnDefinitions.Clear();
+
+            DiceChoicePanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            DiceChoicePanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            for (int column = 0; column < 3; column++)
+                DiceChoicePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            for (int number = 1; number <= 6; number++)
+            {
+                StackPanel label = new()
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                label.Children.Add(new TextBlock
+                {
+                    Text = number.ToString(),
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 16,
+                    FontWeight = FontWeights.Black,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                });
+                label.Children.Add(new TextBlock
+                {
+                    Text = "",
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 9,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Tag = number
+                });
+
+                Button choice = new()
+                {
+                    Content = label,
+                    Tag = number,
+                    Margin = new Thickness(2),
+                    Padding = new Thickness(2),
+                    Background = new SolidColorBrush(Color.FromRgb(54, 31, 36)),
+                    Foreground = Brushes.White,
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(165, 83, 53)),
+                    BorderThickness = new Thickness(1),
+                    Cursor = Cursors.Hand,
+                    Focusable = false
+                };
+                Grid.SetRow(choice, (number - 1) / 3);
+                Grid.SetColumn(choice, (number - 1) % 3);
+                DiceChoicePanel.Children.Add(choice);
+            }
+
+            UpdateDiceChoiceLabels();
+        }
+
+        private void UpdateDiceChoiceLabels()
+        {
+            if (DiceChoicePanel == null || gameState == null || turnOrder.Count == 0)
                 return;
 
-            int player = turnOrder[turnIndex];
+            double preferredChance = gameState.PreferredDiceChance;
 
-            if (playerHP[player] <= 0)
+            foreach (Button choice in DiceChoicePanel.Children.OfType<Button>())
+            {
+                int number = (int)choice.Tag;
+                StackPanel label = (StackPanel)choice.Content;
+                TextBlock probability = (TextBlock)label.Children[1];
+                double chance = hoveredDiceChoice == null
+                    ? 1.0 / 6
+                    : number == hoveredDiceChoice
+                        ? preferredChance
+                        : (1 - preferredChance) / 5;
+                probability.Text = $"{chance:P1}";
+
+                choice.Background = number == hoveredDiceChoice
+                    ? new SolidColorBrush(Color.FromRgb(165, 74, 35))
+                    : new SolidColorBrush(Color.FromRgb(54, 31, 36));
+                choice.BorderBrush = number == hoveredDiceChoice
+                    ? Brushes.Gold
+                    : new SolidColorBrush(Color.FromRgb(165, 83, 53));
+                choice.BorderThickness = number == hoveredDiceChoice
+                    ? new Thickness(2)
+                    : new Thickness(1);
+            }
+        }
+
+        private void RollControlHost_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (!CanStartRoll())
+                return;
+
+            isRollPressActive = true;
+            isChoosingDice = false;
+            hoveredDiceChoice = null;
+            rollHoldTimer.Start();
+            Mouse.Capture(RollControlHost);
+            e.Handled = true;
+        }
+
+        private void RollControlHost_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (!isRollPressActive || !isChoosingDice)
+                return;
+
+            hoveredDiceChoice = GetDiceChoiceAt(e.GetPosition(DiceChoicePanel));
+            UpdateDiceChoiceLabels();
+        }
+
+        private void RollControlHost_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!isRollPressActive)
+                return;
+
+            rollHoldTimer.Stop();
+            int? selected = isChoosingDice
+                ? GetDiceChoiceAt(e.GetPosition(DiceChoicePanel))
+                : null;
+            bool wasChoosing = isChoosingDice;
+
+            isRollPressActive = false;
+            ResetDiceChoiceUI();
+            Mouse.Capture(null);
+            e.Handled = true;
+
+            if (!wasChoosing || selected.HasValue)
+                StartDiceRoll(selected);
+        }
+
+        private void RollHoldTimer_Tick(object? sender, EventArgs e)
+        {
+            rollHoldTimer.Stop();
+            if (!isRollPressActive || !CanStartRoll())
+                return;
+
+            isChoosingDice = true;
+            RollDiceButton.Visibility = Visibility.Collapsed;
+            DiceChoicePanel.Visibility = Visibility.Visible;
+            DiceChoicePanel.UpdateLayout();
+            hoveredDiceChoice = GetDiceChoiceAt(Mouse.GetPosition(DiceChoicePanel));
+            UpdateDiceChoiceLabels();
+        }
+
+        private int? GetDiceChoiceAt(Point point)
+        {
+            if (DiceChoicePanel.ActualWidth <= 0 || DiceChoicePanel.ActualHeight <= 0 ||
+                point.X < 0 || point.Y < 0 ||
+                point.X >= DiceChoicePanel.ActualWidth ||
+                point.Y >= DiceChoicePanel.ActualHeight)
+            {
+                return null;
+            }
+
+            int column = Math.Min(2, (int)(point.X / (DiceChoicePanel.ActualWidth / 3)));
+            int row = Math.Min(1, (int)(point.Y / (DiceChoicePanel.ActualHeight / 2)));
+            return row * 3 + column + 1;
+        }
+
+        private void ResetDiceChoiceUI()
+        {
+            isChoosingDice = false;
+            hoveredDiceChoice = null;
+            DiceChoicePanel.Visibility = Visibility.Collapsed;
+            RollDiceButton.Visibility = Visibility.Visible;
+        }
+
+        private void RollDiceButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!isRollPressActive)
+                StartDiceRoll(preferredNumber: null);
+        }
+
+        private bool CanStartRoll()
+        {
+            return gameState != null &&
+                   gameState.IsGameRunning &&
+                   !gameState.IsMoving &&
+                   !gameState.HasRolledThisTurn &&
+                   !gameState.IsWaitingForPath &&
+                   !gameState.IsWaitingForTeleport &&
+                   !gameState.IsWaitingForCardTarget &&
+                   !isRolling &&
+                   !isClosing &&
+                   RollDiceButton.IsEnabled &&
+                   playerHP.TryGetValue(gameState.CurrentPlayerId, out int hp) && hp > 0;
+        }
+
+        private void StartDiceRoll(int? preferredNumber)
+        {
+            if (!CanStartRoll())
                 return;
 
             isRolling = true;
             RollDiceButton.IsEnabled = false;
-            DiceText.Text = "ROLLING...";
+            DiceText.Text = "…";
             RefreshHand();
-
-            int result = DiceProbability.Roll(
-                random,
-                preferredDice[player],
-                playerHP[player],
-                MaxHP);
-
-            AddGameLog($"PLAYER {player}: 주사위 굴리는 중...");
-            GameDice.Roll(result);
+            SendGameCommand(new GameCommand
+            {
+                Type = GameCommandType.RollDice,
+                PreferredDiceNumber = preferredNumber
+            });
         }
 
         private void GameDice_RollCompleted(object? sender, int result)
@@ -751,26 +1207,17 @@ namespace Software_Project_P3_Death_Marble.Views
 
             isRolling = false;
             DiceText.Text = result.ToString();
-
-            int player = turnOrder[turnIndex];
-            AddGameLog($"PLAYER {player}: 주사위 {result}");
-
-            StartMove(player, result);
+            StartMove(gameState?.CurrentPlayerId ?? movingPlayer);
             RefreshHand();
         }
 
-        private void StartMove(int player, int diceValue)
+        private void StartMove(int player)
         {
             if (gameEnded || isClosing)
                 return;
 
-            isMoving = true;
             movingPlayer = player;
-            remainingSteps = diceValue;
-            RollDiceButton.IsEnabled = false;
-
             moveTimer?.Stop();
-
             if (characters.TryGetValue(player, out PixelCharacter? character))
                 character.StartWalking();
 
@@ -778,50 +1225,39 @@ namespace Software_Project_P3_Death_Marble.Views
             {
                 Interval = TimeSpan.FromMilliseconds(430)
             };
-
             moveTimer.Tick += MoveTimer_Tick;
             moveTimer.Start();
         }
 
         private void MoveTimer_Tick(object? sender, EventArgs e)
         {
-            if (gameEnded || isClosing || !isMoving)
+            if (gameEnded || isClosing || gameState?.IsMoving != true)
                 return;
 
-            if (remainingSteps <= 0)
-            {
-                FinishMove();
-                return;
-            }
-
-            int currentPosition = playerPositions[movingPlayer];
-            TileData currentTile = stage.Map.Tiles[currentPosition];
-
-            if (currentTile.Next.Count > 1)
-            {
-                ShowPathChoices(currentTile.Next);
-                return;
-            }
-
-            TileData nextTile = currentTile.Next.FirstOrDefault()
-                ?? stage.Map.Start!;
-
-            AdvancePlayerTo(nextTile);
+            SendGameCommand(new GameCommand { Type = GameCommandType.AdvanceMovement });
         }
 
-        private void ShowPathChoices(IReadOnlyList<TileData> choices)
+        private void ShowPathChoices(IReadOnlyList<int> optionIndices)
         {
             moveTimer?.Stop();
             PathChoiceButtons.Children.Clear();
 
-            for (int i = 0; i < choices.Count; i++)
+            for (int option = 0; option < optionIndices.Count; option++)
             {
-                TileData choice = choices[i];
+                int pathIndex = option;
+                int tileIndex = optionIndices[option];
+                if (tileIndex < 0 || tileIndex >= stage.Map.Tiles.Count)
+                    continue;
+
+                TileData choice = stage.Map.Tiles[tileIndex];
+                string tileName = GetTileName(choice);
+                string label = string.IsNullOrWhiteSpace(tileName)
+                    ? $"{choice.Position.X}, {choice.Position.Y}"
+                    : $"{tileName} ({choice.Position.X}, {choice.Position.Y})";
 
                 Button button = new()
                 {
-                    Content = $"{i + 1}. {GetTileName(choice)} " +
-                              $"({choice.Position.X}, {choice.Position.Y})",
+                    Content = $"{option + 1}. {label}",
                     Background = new SolidColorBrush(Color.FromRgb(83, 49, 94)),
                     Foreground = Brushes.White,
                     BorderBrush = Brushes.PeachPuff,
@@ -832,62 +1268,23 @@ namespace Software_Project_P3_Death_Marble.Views
                     FontWeight = FontWeights.Bold,
                     Cursor = Cursors.Hand
                 };
-
                 button.Click += (_, _) =>
                 {
                     PathChoiceOverlay.Visibility = Visibility.Collapsed;
-                    AdvancePlayerTo(choice);
+                    SendGameCommand(new GameCommand
+                    {
+                        Type = GameCommandType.SelectPath,
+                        Index = pathIndex
+                    });
                     moveTimer?.Start();
                 };
-
                 PathChoiceButtons.Children.Add(button);
             }
 
             PathChoiceOverlay.Visibility = Visibility.Visible;
         }
-
-        private void AdvancePlayerTo(TileData nextTile)
-        {
-            int nextPosition = GetTileIndex(nextTile);
-
-            if (nextPosition < 0)
-                nextPosition = GetTileIndex(stage.Map.Start!);
-
-            playerPositions[movingPlayer] = nextPosition;
-            remainingSteps--;
-
-            AnimateCharacterToTile(movingPlayer, nextPosition);
-            UpdatePlayerStatus();
-        }
-
-        private void FinishMove()
-        {
-            moveTimer?.Stop();
-            isMoving = false;
-
-            if (characters.TryGetValue(movingPlayer, out PixelCharacter? character))
-                character.StopWalking();
-
-            int position = playerPositions[movingPlayer];
-            TileData tile = stage.Map.Tiles[position];
-
-            AddGameLog(
-                $"PLAYER {movingPlayer}: {GetTileName(tile)} 타일 도착");
-
-            ApplyTileEvent(movingPlayer, tile);
-            UpdatePlayerStatus();
-
-            if (CheckGameEnd())
-                return;
-
-            NextTurn();
-        }
-
         private string GetTileName(TileData tile)
         {
-            if (ReferenceEquals(tile, stage.Map.Start))
-                return "START";
-
             return tile.Type switch
             {
                 TileType.Damage => "DAMAGE",
@@ -896,131 +1293,8 @@ namespace Software_Project_P3_Death_Marble.Views
                 TileType.Prison => "PRISON",
                 TileType.Teleport => "TELEPORT",
                 TileType.Hole => "HOLE",
-                _ => "ZONE"
+                _ => string.Empty
             };
-        }
-
-        private void ApplyTileEvent(int player, TileData tile)
-        {
-            if (ReferenceEquals(tile, stage.Map.Start))
-            {
-                AddGameLog($"PLAYER {player}: 시작 타일에 도착했습니다.");
-            }
-            else
-            {
-                switch (tile.Type)
-                {
-                    case TileType.Card:
-                        if (playerCards[player].Count >= 3)
-                        {
-                            AddGameLog($"PLAYER {player}: 카드 보유 한도 3장");
-                        }
-                        else
-                        {
-                            CardData? card = DrawRandomCard();
-
-                            if (card == null)
-                                AddGameLog("이 스테이지에는 획득할 카드가 없습니다.");
-                            else
-                            {
-                                playerCards[player].Add(card);
-                                AddGameLog($"PLAYER {player}: 카드 획득 — {card.Name}");
-                            }
-                        }
-                        break;
-
-                    case TileType.Heal:
-                        ChangeHP(player, tile.Amount);
-                        break;
-
-                    case TileType.Damage:
-                    case TileType.Hole:
-                        ChangeHP(player, -tile.Amount);
-                        break;
-
-                    case TileType.Prison:
-                        prisonTurns[player] = Math.Max(prisonTurns[player], 1);
-                        AddGameLog($"PLAYER {player}: 감옥에 갇혀 다음 턴을 쉽니다.");
-                        break;
-
-                    case TileType.Teleport:
-                        if (stage.Map.Tiles.Count > 1)
-                        {
-                            int destination = GetRandomOtherTile(player);
-                            RelocatePlayer(player, destination);
-                            FocusCameraOnTile(
-                                destination,
-                                TimeSpan.FromMilliseconds(450));
-                            AddGameLog($"PLAYER {player}: 텔레포트 — 타일 {destination}");
-                        }
-                        break;
-                }
-            }
-
-            // main의 서든 데스 규칙: 20라운드부터 도착 시 HP -5
-            if (currentRound >= 20 && playerHP[player] > 0)
-            {
-                ChangeHP(player, -5);
-                AddGameLog($"PLAYER {player}: 서든데스 HP -5");
-            }
-        }
-
-        private int GetRandomOtherTile(int player)
-        {
-            int current = playerPositions[player];
-
-            List<int> destinations = Enumerable
-                .Range(0, stage.Map.Tiles.Count)
-                .Where(index => index != current)
-                .ToList();
-
-            return destinations.Count == 0
-                ? current
-                : destinations[random.Next(destinations.Count)];
-        }
-
-        private void RelocatePlayer(int player, int tileIndex)
-        {
-            if (tileIndex < 0 || tileIndex >= stage.Map.Tiles.Count)
-                return;
-
-            playerPositions[player] = tileIndex;
-            UpdateCharacterPosition(player);
-        }
-
-        private void ChangeHP(int player, int delta)
-        {
-            if (!playerHP.ContainsKey(player) ||
-                playerHP[player] <= 0 ||
-                delta == 0)
-            {
-                return;
-            }
-
-            int oldHP = playerHP[player];
-            playerHP[player] = Math.Clamp(oldHP + delta, 0, MaxHP);
-
-            int actualChange = playerHP[player] - oldHP;
-            if (actualChange == 0)
-                return;
-
-            if (characters.TryGetValue(player, out PixelCharacter? character))
-            {
-                if (actualChange < 0)
-                    character.PlayDamageEffect();
-                else
-                    character.PlayHealEffect();
-            }
-
-            ShowHPChangeText(player, actualChange);
-            AddGameLog($"PLAYER {player}: HP {actualChange:+0;-0}");
-
-            if (playerHP[player] == 0 &&
-                characters.TryGetValue(player, out PixelCharacter? eliminated))
-            {
-                eliminated.Visibility = Visibility.Collapsed;
-                AddGameLog($"PLAYER {player} 탈락!");
-            }
         }
 
         private void ShowHPChangeText(int player, int amount)
@@ -1072,103 +1346,6 @@ namespace Software_Project_P3_Death_Marble.Views
             effectText.BeginAnimation(OpacityProperty, fade);
         }
 
-        private void NextTurn()
-        {
-            if (CheckGameEnd())
-                return;
-
-            while (!gameEnded)
-            {
-                for (int i = 0; i < turnOrder.Count; i++)
-                {
-                    turnIndex++;
-
-                    if (turnIndex >= turnOrder.Count)
-                    {
-                        turnIndex = 0;
-                        currentRound++;
-                    }
-
-                    if (currentRound > MaxRounds)
-                    {
-                        EndGameByHP();
-                        return;
-                    }
-
-                    int player = turnOrder[turnIndex];
-
-                    if (playerHP[player] <= 0)
-                        continue;
-
-                    if (prisonTurns[player] > 0)
-                    {
-                        prisonTurns[player]--;
-                        AddGameLog($"PLAYER {player}: 감옥으로 턴을 건너뜁니다.");
-                        continue;
-                    }
-
-                    cardUsed = false;
-                    DiceText.Text = "READY";
-                    RollDiceButton.IsEnabled = true;
-
-                    UpdateTurnDisplay();
-                    UpdatePlayerStatus();
-                    AddGameLog($"PLAYER {player} 턴 시작");
-                    return;
-                }
-            }
-        }
-
-        private bool CheckGameEnd()
-        {
-            List<int> alivePlayers = playerHP
-                .Where(entry => entry.Value > 0)
-                .Select(entry => entry.Key)
-                .ToList();
-
-            if (alivePlayers.Count > 1)
-                return false;
-
-            EndGame(alivePlayers.Count == 1 ? alivePlayers[0] : null);
-            return true;
-        }
-
-        private void EndGameByHP()
-        {
-            if (playerHP.Count == 0)
-            {
-                EndGame(null);
-                return;
-            }
-
-            int maxHP = playerHP.Values.Max();
-
-            List<int> leaders = playerHP
-                .Where(entry => entry.Value == maxHP)
-                .Select(entry => entry.Key)
-                .ToList();
-
-            EndGame(leaders.Count == 1 ? leaders[0] : null);
-        }
-
-        private void EndGame(int? winner)
-        {
-            if (gameEnded)
-                return;
-
-            gameEnded = true;
-            StopAnimations();
-            RollDiceButton.IsEnabled = false;
-            RefreshHand();
-
-            AddGameLog(
-                winner.HasValue
-                    ? $"PLAYER {winner.Value} 승리!"
-                    : "게임 종료: 공동 결과");
-
-            GameFinished?.Invoke(this, winner);
-        }
-
         private void AddGameLog(string message)
         {
             TextBlock log = new()
@@ -1184,265 +1361,230 @@ namespace Software_Project_P3_Death_Marble.Views
             LogScrollViewer.ScrollToEnd();
         }
 
-        private CardData? DrawRandomCard()
-        {
-            long total = stage.Cards
-                .Where(entry => entry != null &&
-                                entry.Card != null &&
-                                entry.Count > 0)
-                .Sum(entry => (long)entry.Count);
-
-            if (total <= 0)
-                return null;
-
-            long ticket = random.NextInt64(total);
-
-            foreach (CardEntry entry in stage.Cards)
-            {
-                if (entry == null || entry.Card == null || entry.Count <= 0)
-                    continue;
-
-                if (ticket < entry.Count)
-                    return CloneCard(entry.Card);
-
-                ticket -= entry.Count;
-            }
-
-            return null;
-        }
-
-        private static CardData CloneCard(CardData card)
-        {
-            return new CardData
-            {
-                Name = card.Name,
-                Description = card.Description,
-                Usable = card.Usable,
-                Effects = (card.Effects ?? new List<EffectData>())
-                    .Select(effect => new EffectData
-                    {
-                        Type = effect.Type,
-                        Target = effect.Target,
-                        Count = effect.Count,
-                        Amount = effect.Amount
-                    })
-                    .ToList()
-            };
-        }
-
         private void RefreshHand()
         {
-            if (HandPanel == null)
+            if (HandPanel == null ||
+                turnOrder == null ||
+                playerCards.Count != playerCount)
                 return;
 
             HandPanel.Children.Clear();
 
-            if (turnOrder.Count == 0 || gameEnded || isClosing)
+            if (turnOrder.Count == 0 || isClosing)
                 return;
 
-            int player = turnOrder[turnIndex];
+            int activePlayer = turnOrder[turnIndex];
+            double availableWidth = HandScrollViewer?.ViewportWidth ?? 0;
+            if (availableWidth <= 1)
+                availableWidth = HandScrollViewer?.ActualWidth ?? 0;
+            if (availableWidth <= 1)
+                availableWidth = ActualWidth * 0.56;
 
-            foreach (CardData card in playerCards[player].ToArray())
+            double playerPanelWidth = Math.Max(
+                150,
+                (availableWidth - 8 * playerCount) / playerCount);
+
+            for (int player = 1; player <= playerCount; player++)
             {
-                TextBlock label = new()
+                StackPanel playerPanel = new()
                 {
-                    Text = $"{card.Name}\n{card.Description}",
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = Brushes.Bisque
+                    Orientation = Orientation.Vertical
                 };
 
-                Button button = new()
+                Border playerBorder = new()
                 {
-                    Content = label,
-                    Width = 155,
-                    Height = 78,
-                    Margin = new Thickness(4),
+                    Background = new SolidColorBrush(Color.FromRgb(39, 23, 28)),
+                    BorderBrush = player == activePlayer ? GetPlayerColor(player) : Brushes.SaddleBrown,
+                    BorderThickness = new Thickness(player == activePlayer ? 2 : 1),
                     Padding = new Thickness(7),
-                    Background = Brushes.DarkSlateBlue,
-                    BorderBrush = Brushes.Goldenrod,
-                    IsEnabled = !cardUsed &&
-                                !isMoving &&
-                                !isRolling &&
-                                !gameEnded &&
-                                !isClosing &&
-                                card.Usable
+                    Margin = new Thickness(3, 2, 3, 2),
+                    Width = playerPanelWidth,
+                    Child = playerPanel
                 };
 
-                button.Click += (_, _) => UseCard(card);
-                HandPanel.Children.Add(button);
+                TextBlock playerLabel = new()
+                {
+                    Text = $"PLAYER {player}  ·  {playerCards[player].Count}/3",
+                    Foreground = GetPlayerColor(player),
+                    FontFamily = new FontFamily("Consolas"),
+                    FontWeight = FontWeights.Bold,
+                    Margin = new Thickness(2, 0, 0, 5)
+                };
+                playerPanel.Children.Add(playerLabel);
+
+                StackPanel cardList = new()
+                {
+                    Orientation = Orientation.Vertical
+                };
+                playerPanel.Children.Add(cardList);
+
+                if (playerCards[player].Count == 0)
+                {
+                    cardList.Children.Add(new TextBlock
+                    {
+                        Text = "—",
+                        Foreground = Brushes.Gray,
+                        Margin = new Thickness(3, 2, 0, 2)
+                    });
+                }
+
+                foreach (CardData card in playerCards[player].ToArray())
+                {
+                    StackPanel tooltipContent = new();
+                    tooltipContent.Children.Add(new TextBlock
+                    {
+                        Text = card.Name,
+                        FontWeight = FontWeights.Bold,
+                        Foreground = Brushes.White,
+                        TextWrapping = TextWrapping.Wrap
+                    });
+                    tooltipContent.Children.Add(new TextBlock
+                    {
+                        Text = card.Description,
+                        Foreground = Brushes.Bisque,
+                        TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(0, 4, 0, 0)
+                    });
+
+                    ToolTip toolTip = new()
+                    {
+                        Content = tooltipContent,
+                        Placement = PlacementMode.Mouse,
+                        MaxWidth = 280,
+                        Background = new SolidColorBrush(Color.FromRgb(25, 13, 17)),
+                        BorderBrush = Brushes.Goldenrod,
+                        BorderThickness = new Thickness(1),
+                        Padding = new Thickness(8)
+                    };
+                    Button button = new()
+                    {
+                        Content = new TextBlock
+                        {
+                            Text = card.Name,
+                            TextWrapping = TextWrapping.NoWrap,
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                            TextAlignment = TextAlignment.Center
+                        },
+                        ToolTip = toolTip,
+                        Width = Math.Max(112, playerPanelWidth - 24),
+                        Height = 34,
+                        Margin = new Thickness(2, 2, 2, 3),
+                        Padding = new Thickness(3, 1, 3, 1),
+                        Background = new SolidColorBrush(Color.FromRgb(64, 43, 96)),
+                        BorderBrush = Brushes.Goldenrod,
+                        Foreground = Brushes.Bisque,
+                        FontSize = 12,
+                        FontWeight = FontWeights.Bold,
+                        IsEnabled = !gameEnded &&
+                                    player == activePlayer &&
+                                    !hasRolledThisTurn &&
+                                    !isMoving &&
+                                    !isRolling &&
+                                    gameState?.IsWaitingForCardTarget != true &&
+                                    !isClosing &&
+                                    card.Usable
+                    };
+
+                    button.Click += (_, _) => UseCard(card);
+                    ToolTipService.SetShowOnDisabled(button, true);
+                    ToolTipService.SetPlacement(button, PlacementMode.Mouse);
+                    ToolTipService.SetInitialShowDelay(button, 100);
+                    cardList.Children.Add(button);
+                }
+
+                HandPanel.Children.Add(playerBorder);
             }
+        }
+
+        private void HandScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            RefreshHand();
         }
 
         private void UseCard(CardData card)
         {
-            if (cardUsed || isMoving || isRolling || gameEnded || isClosing)
+            if (gameState == null || !CanStartRoll())
                 return;
 
-            int player = turnOrder[turnIndex];
-
-            if (!card.Usable || !playerCards[player].Contains(card))
+            int owner = gameState.CurrentPlayerId;
+            if (!playerCards.TryGetValue(owner, out List<CardData>? cards))
                 return;
 
-            int? selectedOther = null;
+            int cardIndex = cards.FindIndex(candidate => ReferenceEquals(candidate, card));
+            if (cardIndex < 0 || !card.Usable)
+                return;
 
-            if (card.Effects.Any(effect =>
-                    effect.Type != EffectType.None &&
-                    effect.Target == TargetType.Other))
+            SendGameCommand(new GameCommand
             {
-                selectedOther = FateDialog.Choose(
-                    Window.GetWindow(this),
-                    "대상 선택",
-                    turnOrder
-                        .Where(id => id != player && playerHP[id] > 0)
-                        .Select(id => (id, $"PLAYER {id} · HP {playerHP[id]}")));
-
-                if (!selectedOther.HasValue)
-                    return;
-            }
-
-            foreach (EffectData effect in card.Effects)
-                ApplyCardEffect(player, effect, selectedOther);
-
-            playerCards[player].Remove(card);
-            cardUsed = true;
-
-            AddGameLog($"PLAYER {player}: {card.Name} 사용");
-            UpdatePlayerStatus();
-            RefreshHand();
-
-            if (!CheckGameEnd() && playerHP[player] <= 0)
-                NextTurn();
+                Type = GameCommandType.UseCard,
+                Index = cardIndex
+            });
         }
 
-        private void ApplyCardEffect(
-            int owner,
-            EffectData effect,
-            int? selectedOther)
+        private void ShowCardTargetSelection(GameManagerMessage message)
         {
-            if (effect.Type == EffectType.None)
-                return;
+            pendingTargetCardIndex = message.CardIndex;
+            pendingTargetOwner = message.PlayerId;
+            pendingTargetIsImmediate = message.IsImmediateCard;
+            CardTargetText.Text = $"PLAYER {message.PlayerId} · {message.Text}\n아래 플레이어 지정 칸에서 대상을 선택하세요.";
+            CardTargetButtons.Children.Clear();
 
-            int repeat = Math.Clamp(effect.Count, 0, 50);
-
-            for (int i = 0; i < repeat; i++)
+            foreach (int target in message.OptionIndices)
             {
-                if (effect.Type == EffectType.Swap &&
-                    effect.Target == TargetType.All)
-                {
-                    ShuffleAlivePlayerPositions();
+                if (!playerHP.TryGetValue(target, out int hp) || hp <= 0)
                     continue;
-                }
 
-                List<int> targets = ResolveCardTargets(
-                    owner,
-                    effect.Target,
-                    selectedOther);
-
-                foreach (int target in targets)
+                Button targetButton = new()
                 {
-                    switch (effect.Type)
-                    {
-                        case EffectType.Damage:
-                            ChangeHP(target, -effect.Amount);
-                            break;
-
-                        case EffectType.Heal:
-                            ChangeHP(target, effect.Amount);
-                            break;
-
-                        case EffectType.Teleport:
-                            if (stage.Map.Tiles.Count > 1)
-                            {
-                                int destination = GetRandomOtherTile(target);
-                                RelocatePlayer(target, destination);
-                                FocusCameraOnTile(
-                                    destination,
-                                    TimeSpan.FromMilliseconds(450));
-                            }
-                            break;
-
-                        case EffectType.Swap:
-                            if (target != owner)
-                                SwapPlayerPositions(owner, target);
-                            break;
-                    }
-                }
+                    Content = $"PLAYER {target}\nHP {hp} / {MaxHP}",
+                    Width = 125,
+                    Height = 48,
+                    Margin = new Thickness(3),
+                    Padding = new Thickness(4),
+                    Background = new SolidColorBrush(Color.FromRgb(39, 23, 28)),
+                    BorderBrush = GetPlayerColor(target),
+                    BorderThickness = new Thickness(3),
+                    Foreground = Brushes.Bisque,
+                    FontFamily = new FontFamily("Consolas"),
+                    FontWeight = FontWeights.Bold,
+                    Cursor = Cursors.Hand
+                };
+                targetButton.Click += (_, _) => QueueCardTargetSelection(
+                    target,
+                    message.CardIndex,
+                    message.PlayerId,
+                    message.IsImmediateCard);
+                CardTargetButtons.Children.Add(targetButton);
             }
+
+            CancelTargetButton.Visibility = message.IsImmediateCard
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            CardTargetOverlay.Visibility = Visibility.Visible;
         }
 
-        private List<int> ResolveCardTargets(
-            int owner,
-            TargetType target,
-            int? selectedOther)
+        private void CancelTargetButton_Click(object sender, RoutedEventArgs e)
         {
-            switch (target)
-            {
-                case TargetType.Self:
-                    return playerHP[owner] > 0
-                        ? new List<int> { owner }
-                        : new List<int>();
+            if (gameState?.IsWaitingForCardTarget != true || pendingTargetIsImmediate)
+                return;
 
-                case TargetType.Other:
-                    return selectedOther.HasValue &&
-                           playerHP.TryGetValue(selectedOther.Value, out int hp) &&
-                           hp > 0
-                        ? new List<int> { selectedOther.Value }
-                        : new List<int>();
-
-                case TargetType.All:
-                    return turnOrder
-                        .Where(id => playerHP[id] > 0)
-                        .ToList();
-
-                case TargetType.Random:
-                    List<int> opponents = turnOrder
-                        .Where(id => id != owner && playerHP[id] > 0)
-                        .ToList();
-
-                    return opponents.Count == 0
-                        ? new List<int>()
-                        : new List<int>
-                        {
-                            opponents[random.Next(opponents.Count)]
-                        };
-
-                default:
-                    return new List<int>();
-            }
+            SendGameCommand(new GameCommand { Type = GameCommandType.CancelCardTarget });
         }
 
-        private void SwapPlayerPositions(int first, int second)
+        private void UpdateRollButtonState()
         {
-            (playerPositions[first], playerPositions[second]) =
-                (playerPositions[second], playerPositions[first]);
-
-            UpdateCharacterPosition(first);
-            UpdateCharacterPosition(second);
-        }
-
-        private void ShuffleAlivePlayerPositions()
-        {
-            List<int> players = turnOrder
-                .Where(id => playerHP[id] > 0)
-                .ToList();
-
-            List<int> positions = players
-                .Select(id => playerPositions[id])
-                .ToList();
-
-            for (int i = positions.Count - 1; i > 0; i--)
+            if (gameState == null ||
+                gameEnded || isClosing || isRolling ||
+                gameState.IsMoving || gameState.HasRolledThisTurn ||
+                gameState.IsWaitingForPath || gameState.IsWaitingForTeleport ||
+                gameState.IsWaitingForCardTarget)
             {
-                int j = random.Next(i + 1);
-                (positions[i], positions[j]) = (positions[j], positions[i]);
+                RollDiceButton.IsEnabled = false;
+                return;
             }
 
-            for (int i = 0; i < players.Count; i++)
-            {
-                playerPositions[players[i]] = positions[i];
-                UpdateCharacterPosition(players[i]);
-            }
+            RollDiceButton.IsEnabled = playerHP.TryGetValue(gameState.CurrentPlayerId, out int hp) && hp > 0;
         }
-
         public List<Player> ResultPlayers()
         {
             return playerHP.Select(entry =>
@@ -1460,6 +1602,14 @@ namespace Software_Project_P3_Death_Marble.Views
         private void StopAnimations()
         {
             moveTimer?.Stop();
+            rollHoldTimer.Stop();
+            isRollPressActive = false;
+            ResetDiceChoiceUI();
+            pendingTeleportPlayer = null;
+            pendingTeleportSourceTile = -1;
+            TeleportTargetOverlay.Visibility = Visibility.Collapsed;
+            if (RollControlHost.IsMouseCaptured)
+                Mouse.Capture(null);
             GameDice.StopRolling();
             StopCameraAnimation();
 
@@ -1470,6 +1620,18 @@ namespace Software_Project_P3_Death_Marble.Views
                 character.StopAllAnimations();
         }
 
+        private void DisposeGameConnections()
+        {
+            if (connectionsDisposed)
+                return;
+
+            connectionsDisposed = true;
+            GameDice.RollCompleted -= GameDice_RollCompleted;
+            gameConnector.OnInvoke = null;
+            gameConnector.Destroy();
+            gameManager.Dispose();
+        }
+
         private void ExitButton_Click(object sender, RoutedEventArgs e)
         {
             if (isClosing)
@@ -1477,6 +1639,7 @@ namespace Software_Project_P3_Death_Marble.Views
 
             isClosing = true;
             StopAnimations();
+            DisposeGameConnections();
             ExitRequested?.Invoke(this, EventArgs.Empty);
         }
     }

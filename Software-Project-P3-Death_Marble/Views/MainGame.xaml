@@ -28,8 +28,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="75"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="118"/>
-            <RowDefinition Height="125"/>
+            <RowDefinition Height="220"/>
         </Grid.RowDefinitions>
 
         <!-- 상단 -->
@@ -37,6 +36,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
             <TextBlock Text="DEATH MARBLE"
@@ -47,21 +47,22 @@
                        VerticalAlignment="Center"/>
 
             <StackPanel Grid.Column="1"
-                        VerticalAlignment="Center">
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center">
                 <TextBlock x:Name="RoundText"
                            Text="ROUND 01 / 40"
                            FontFamily="Consolas"
                            FontSize="22"
                            FontWeight="Bold"
                            Foreground="#F2C27D"
-                           HorizontalAlignment="Right"/>
+                           HorizontalAlignment="Center"/>
 
                 <TextBlock x:Name="SuddenDeathText"
                            Text="NORMAL MODE"
                            FontFamily="Consolas"
                            FontSize="14"
                            Foreground="#E8C6A5"
-                           HorizontalAlignment="Right"/>
+                           HorizontalAlignment="Center"/>
             </StackPanel>
         </Grid>
 
@@ -85,12 +86,14 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="INFERNAL BOARD"
+                    <TextBlock x:Name="BoardNameText"
+                               Text="INFERNAL BOARD"
                                FontFamily="Consolas"
                                FontSize="22"
                                FontWeight="Bold"
                                Foreground="#F2C27D"
                                HorizontalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
                                Margin="0,8,0,10"/>
 
                     <Canvas x:Name="BoardViewport"
@@ -130,6 +133,59 @@
                                        HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Border>
+
+                    <Border x:Name="CardTargetOverlay"
+                            Grid.Row="1"
+                            Panel.ZIndex="11"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            MaxWidth="440"
+                            Padding="18"
+                            Background="#F01B1014"
+                            BorderBrush="#F4A64B"
+                            BorderThickness="3">
+                        <StackPanel>
+                            <TextBlock Text="대상 플레이어를 선택하세요"
+                                       FontFamily="Consolas"
+                                       FontSize="18"
+                                       FontWeight="Bold"
+                                       Foreground="#F2C27D"/>
+                            <TextBlock x:Name="CardTargetText"
+                                       Foreground="#FFE1BF"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0"/>
+                            <WrapPanel x:Name="CardTargetButtons"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,8,0,0"/>
+                            <Button x:Name="CancelTargetButton"
+                                    Content="취소"
+                                    Style="{StaticResource GameButton}"
+                                    Height="38"
+                                    Margin="0,12,0,0"
+                                    Click="CancelTargetButton_Click"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="TeleportTargetOverlay"
+                            Grid.Row="1"
+                            Panel.ZIndex="12"
+                            Visibility="Collapsed"
+                            IsHitTestVisible="False"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Top"
+                            Margin="0,12,0,0"
+                            Padding="10,7"
+                            Background="#E01B1014"
+                            BorderBrush="#F4A64B"
+                            BorderThickness="2">
+                        <TextBlock x:Name="TeleportTargetText"
+                                   Text="이동할 타일을 클릭하세요."
+                                   FontFamily="Consolas"
+                                   FontSize="16"
+                                   FontWeight="Bold"
+                                   Foreground="#F2C27D"/>
+                    </Border>
                 </Grid>
             </Border>
 
@@ -138,132 +194,154 @@
                     Background="#1B1014"
                     BorderBrush="#A65335"
                     BorderThickness="4"
-                    Padding="15">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel>
+                    Padding="8">
+                <StackPanel>
                         <TextBlock Text="PLAYER STATUS"
                                    FontFamily="Consolas"
-                                   FontSize="21"
+                                   FontSize="18"
                                    FontWeight="Bold"
                                    Foreground="#F2C27D"
-                                   Margin="0,0,0,15"/>
+                                   Margin="0,0,0,3"/>
 
                         <StackPanel x:Name="PlayerStatusPanel"/>
 
                         <Separator Background="#A65335"
-                                   Margin="0,18"/>
+                                   Margin="0,1"/>
 
                         <TextBlock Text="CURRENT TURN"
                                    FontFamily="Consolas"
-                                   FontSize="18"
+                                   FontSize="11"
                                    FontWeight="Bold"
                                    Foreground="#F2C27D"/>
 
                         <TextBlock x:Name="CurrentTurnText"
                                    Text="PLAYER 1"
                                    FontFamily="Consolas"
-                                   FontSize="27"
+                                   FontSize="16"
                                    FontWeight="Black"
                                    Foreground="White"
-                                   Margin="0,8,0,18"/>
+                                   Margin="0,0,0,4"/>
 
                         <Border Background="#29171A"
                                 BorderBrush="#A65335"
                                 BorderThickness="3"
-                                Padding="10">
-                            <StackPanel>
-                                <TextBlock Text="3D DICE"
-                                           FontFamily="Consolas"
-                                           FontSize="17"
-                                           Foreground="#F2C27D"
-                                           HorizontalAlignment="Center"/>
-
+                                Padding="6">
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center">
                                 <local:Dice3D x:Name="GameDice"
-                                              Width="135"
-                                              Height="135"
-                                              HorizontalAlignment="Center"
-                                              Margin="0,6,0,3"/>
+                                              Width="62"
+                                              Height="62"
+                                              Margin="0,0,10,0"/>
 
                                 <TextBlock x:Name="DiceText"
                                            Text="READY"
                                            FontFamily="Consolas"
-                                           FontSize="20"
-                                           FontWeight="Bold"
+                                           FontSize="34"
+                                           FontWeight="Black"
                                            Foreground="#F2C27D"
-                                           HorizontalAlignment="Center"/>
+                                           VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
 
-                        <Button x:Name="RollDiceButton"
-                                Content="▶ 주사위 굴리기"
-                                Style="{StaticResource GameButton}"
-                                Margin="0,18,0,0"
-                                Click="RollDiceButton_Click"/>
+                        <Grid x:Name="RollControlHost"
+                              Height="76"
+                              Margin="0,3,0,0"
+                              Cursor="Hand"
+                              PreviewMouseLeftButtonDown="RollControlHost_PreviewMouseLeftButtonDown"
+                              PreviewMouseLeftButtonUp="RollControlHost_PreviewMouseLeftButtonUp"
+                              PreviewMouseMove="RollControlHost_PreviewMouseMove">
+                            <Button x:Name="RollDiceButton"
+                                    Content="▶ 주사위 굴리기"
+                                    Style="{StaticResource GameButton}"
+                                    Height="46"
+                                    VerticalAlignment="Center"
+                                    Click="RollDiceButton_Click"/>
+                            <Grid x:Name="DiceChoicePanel"
+                                  Visibility="Collapsed">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                            </Grid>
+                        </Grid>
 
                         <Button Content="게임 종료"
                                 Style="{StaticResource GameButton}"
                                 Background="#25171B"
                                 BorderBrush="#825449"
-                                Margin="0,20,0,0"
+                                Height="34"
+                                Margin="0,0,0,0"
                                 Click="ExitButton_Click"/>
                     </StackPanel>
-                </ScrollViewer>
             </Border>
         </Grid>
 
-        <!-- 보유 카드 -->
-        <Border Grid.Row="2"
-                Background="#170E12"
-                BorderBrush="#A65335"
-                BorderThickness="2"
-                Padding="8"
-                Margin="0,5,0,0">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
+        <!-- 플레이어별 카드와 게임 로그 -->
+        <Grid Grid.Row="2" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.45*"/>
+                <ColumnDefinition Width="14"/>
+                <ColumnDefinition Width="1*"/>
+            </Grid.ColumnDefinitions>
 
-                <TextBlock Text="보유 카드 · 카드를 클릭하여 사용"
-                           Foreground="#F2C27D"
-                           FontSize="15"
-                           FontWeight="Bold"/>
+            <Border Grid.Column="0"
+                    Background="#170E12"
+                    BorderBrush="#A65335"
+                    BorderThickness="2"
+                    Padding="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
 
-                <ScrollViewer Grid.Row="1"
-                              HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="HandPanel"
-                                Orientation="Horizontal"/>
-                </ScrollViewer>
-            </Grid>
-        </Border>
+                    <TextBlock Text="플레이어별 액티브 카드 · 주사위를 굴리기 전에 사용"
+                               Foreground="#F2C27D"
+                               FontSize="15"
+                               FontWeight="Bold"/>
 
-        <!-- 게임 로그 -->
-        <Border Grid.Row="3"
-                Background="#170E12"
-                BorderBrush="#A65335"
-                BorderThickness="3"
-                Margin="0,15,0,0"
-                Padding="12">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
+                    <ScrollViewer x:Name="HandScrollViewer"
+                                  Grid.Row="1"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  SizeChanged="HandScrollViewer_SizeChanged">
+                        <StackPanel x:Name="HandPanel"
+                                    Orientation="Horizontal"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
 
-                <TextBlock Text="GAME LOG"
-                           FontFamily="Consolas"
-                           FontSize="17"
-                           FontWeight="Bold"
-                           Foreground="#F2C27D"/>
+            <Border Grid.Column="2"
+                    Background="#170E12"
+                    BorderBrush="#A65335"
+                    BorderThickness="3"
+                    Padding="12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
 
-                <ScrollViewer x:Name="LogScrollViewer"
-                              Grid.Row="1"
-                              VerticalScrollBarVisibility="Auto"
-                              Margin="0,8,0,0">
-                    <StackPanel x:Name="GameLogPanel"/>
-                </ScrollViewer>
-            </Grid>
-        </Border>
+                    <TextBlock Text="GAME LOG"
+                               FontFamily="Consolas"
+                               FontSize="17"
+                               FontWeight="Bold"
+                               Foreground="#F2C27D"/>
+
+                    <ScrollViewer x:Name="LogScrollViewer"
+                                  Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Margin="0,8,0,0">
+                        <StackPanel x:Name="GameLogPanel"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>

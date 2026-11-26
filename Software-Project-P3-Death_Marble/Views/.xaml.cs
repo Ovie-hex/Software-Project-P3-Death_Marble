@@ -25,7 +25,6 @@ namespace Software_Project_P3_Death_Marble.Views
             // Init Modules
             new Data_Manager();
             new Stage_Customizer();
-            new Game_Manager();
 
             
         }
